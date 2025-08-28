@@ -1,4 +1,4 @@
-# Small-To-Medium-Business-Solutions - Insurancer solution
+# Small-To-Medium-Business-Solutions for Insurance 
 
 A mid-size insurer deploys a JSON-rules, AI-generated UI platform to streamline quotes, FNOL, and claims.
 Customers or agents start in a guided intake where the UI is auto-built from a uiModel and validates in real time.
