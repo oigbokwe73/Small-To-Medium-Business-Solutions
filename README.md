@@ -37,7 +37,7 @@ sequenceDiagram
 
   %% --- Workflow evaluation ---
   WF->>WF: Evaluate steps switch/compute/route
-  WF->>TR: Append trace"classify","price","route"
+  WF->>TR: Append trace "classify","price","route"
 
   alt Approval gate required?
     WF->>DB: INSERT PendingApproval gateId, approvers
