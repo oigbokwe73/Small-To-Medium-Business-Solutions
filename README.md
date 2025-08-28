@@ -321,8 +321,673 @@ sequenceDiagram
 
 ---
 
-If helpful, I can:
+Awesome — here’s a build-ready **Azure SQL** schema and a focused set of **stored procedures** for the insurance data model we discussed (claims, policies, approvals, payments, workflow activations, audit/trace). It’s opinionated for reliability, auditability, and JSON-driven workflows.
 
-* generate **full JSON Schemas** (workflow + uiModel),
-* drop **Azure Functions** skeletons for `/claims`, `/quotes`, `/trace`,
-* and provide **Mermaid swimlanes** tailored to your exact product lines (auto/home/commercial).
+---
+
+# 1) Schema & Tables (T-SQL)
+
+```sql
+-- Recommended: one-time settings
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+
+-- Use a dedicated schema
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'ins')
+    EXEC('CREATE SCHEMA ins');
+
+------------------------------------------------------------
+-- Reference & system tables
+------------------------------------------------------------
+CREATE TABLE ins.Tenants (
+    TenantId UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Tenants_TenantId DEFAULT NEWID(),
+    Name        NVARCHAR(200) NOT NULL,
+    Status      NVARCHAR(30)  NOT NULL CONSTRAINT CK_Tenants_Status CHECK (Status IN ('Active','Inactive')),
+    CreatedAt   DATETIME2(3)  NOT NULL CONSTRAINT DF_Tenants_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy   NVARCHAR(128) NULL,
+    ModifiedAt  DATETIME2(3)  NULL,
+    ModifiedBy  NVARCHAR(128) NULL,
+    RowVersion  ROWVERSION,
+    CONSTRAINT PK_Tenants PRIMARY KEY (TenantId)
+);
+
+CREATE TABLE ins.Customers (
+    CustomerId UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Customers_CustomerId DEFAULT NEWID(),
+    TenantId   UNIQUEIDENTIFIER NOT NULL,
+    ExternalRef NVARCHAR(100) NULL,           -- CRM/Agency Mgmt ID
+    FullName   NVARCHAR(200) NOT NULL,
+    Email      NVARCHAR(256) NULL,
+    Phone      NVARCHAR(50)  NULL,
+    Address1   NVARCHAR(200) NULL,
+    City       NVARCHAR(100) NULL,
+    Region     NVARCHAR(100) NULL,            -- State/Province
+    PostalCode NVARCHAR(20)  NULL,
+    Country    NVARCHAR(100) NULL,
+    CreatedAt  DATETIME2(3)  NOT NULL CONSTRAINT DF_Customers_CreatedAt DEFAULT SYSUTCDATETIME(),
+    RowVersion ROWVERSION,
+    CONSTRAINT PK_Customers PRIMARY KEY (CustomerId),
+    CONSTRAINT FK_Customers_Tenants FOREIGN KEY (TenantId) REFERENCES ins.Tenants(TenantId)
+);
+
+------------------------------------------------------------
+-- Policy & product
+------------------------------------------------------------
+CREATE TABLE ins.Policies (
+    PolicyId      UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Policies_PolicyId DEFAULT NEWID(),
+    TenantId      UNIQUEIDENTIFIER NOT NULL,
+    CustomerId    UNIQUEIDENTIFIER NOT NULL,
+    Product       NVARCHAR(50)  NOT NULL,     -- e.g., 'auto','home','commercial'
+    Status        NVARCHAR(30)  NOT NULL CONSTRAINT CK_Policies_Status CHECK (Status IN ('Quoted','Active','Lapsed','Cancelled')),
+    EffectiveDate DATE          NOT NULL,
+    RenewalDate   DATE          NULL,
+    CoveragesJson NVARCHAR(MAX) NULL,         -- JSON coverages/limits/deductibles
+    CreatedAt     DATETIME2(3)  NOT NULL CONSTRAINT DF_Policies_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy     NVARCHAR(128) NULL,
+    ModifiedAt    DATETIME2(3)  NULL,
+    ModifiedBy    NVARCHAR(128) NULL,
+    RowVersion    ROWVERSION,
+    CONSTRAINT PK_Policies PRIMARY KEY (PolicyId),
+    CONSTRAINT FK_Policies_Tenants   FOREIGN KEY (TenantId)   REFERENCES ins.Tenants(TenantId),
+    CONSTRAINT FK_Policies_Customers FOREIGN KEY (CustomerId) REFERENCES ins.Customers(CustomerId),
+    CONSTRAINT CK_Policies_CoveragesJson_JSON CHECK (CoveragesJson IS NULL OR ISJSON(CoveragesJson) = 1)
+);
+CREATE INDEX IX_Policies_Tenant_Product_Status ON ins.Policies(TenantId, Product, Status);
+
+------------------------------------------------------------
+-- Workflow metadata & activation (canary)
+------------------------------------------------------------
+CREATE TABLE ins.WorkflowDefinitions (
+    WorkflowDefId UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_WorkflowDefinitions_Id DEFAULT NEWID(),
+    TenantId      UNIQUEIDENTIFIER NOT NULL,
+    Product       NVARCHAR(50)     NOT NULL,
+    WorkflowId    NVARCHAR(200)    NOT NULL,   -- e.g., claims.fnol.auto
+    Version       INT              NOT NULL,
+    StorageUrl    NVARCHAR(400)    NOT NULL,   -- blob URL to immutable JSON (rules+uiModel)
+    Sha256        CHAR(64)         NULL,       -- integrity
+    CreatedAt     DATETIME2(3)     NOT NULL CONSTRAINT DF_WorkflowDefinitions_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy     NVARCHAR(128)    NULL,
+    CONSTRAINT PK_WorkflowDefinitions PRIMARY KEY (WorkflowDefId),
+    CONSTRAINT UQ_Workflow_Tenant_Product_Id_Version UNIQUE (TenantId, Product, WorkflowId, Version),
+    CONSTRAINT FK_WfDef_Tenant FOREIGN KEY (TenantId) REFERENCES ins.Tenants(TenantId)
+);
+
+-- Two rows "Active" at once enable canary (new + previous); % must sum <= 100
+CREATE TABLE ins.WorkflowActivations (
+    ActivationId  UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_WorkflowActivations_Id DEFAULT NEWID(),
+    TenantId      UNIQUEIDENTIFIER NOT NULL,
+    Product       NVARCHAR(50)     NOT NULL,
+    WorkflowId    NVARCHAR(200)    NOT NULL,
+    Version       INT              NOT NULL,
+    RolloutPercent TINYINT         NOT NULL CHECK (RolloutPercent BETWEEN 0 AND 100),
+    Status        NVARCHAR(20)     NOT NULL CONSTRAINT CK_WFA_Status CHECK (Status IN ('Active','Retired')),
+    ActivatedAt   DATETIME2(3)     NOT NULL CONSTRAINT DF_WFA_ActivatedAt DEFAULT SYSUTCDATETIME(),
+    ActivatedBy   NVARCHAR(128)    NULL,
+    PreviousVersion INT            NULL,       -- for quick rollback decisioning
+    Notes         NVARCHAR(400)    NULL,
+    CONSTRAINT PK_WorkflowActivations PRIMARY KEY (ActivationId),
+    CONSTRAINT FK_WFA_WfDef FOREIGN KEY (TenantId, Product, WorkflowId, Version)
+        REFERENCES ins.WorkflowDefinitions(TenantId, Product, WorkflowId, Version)
+);
+CREATE INDEX IX_WFA_Tenant_Product_Status ON ins.WorkflowActivations(TenantId, Product, Status)
+    WHERE Status = 'Active';
+
+------------------------------------------------------------
+-- Claims, approvals, payments
+------------------------------------------------------------
+CREATE TABLE ins.Claims (
+    ClaimId       UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Claims_ClaimId DEFAULT NEWID(),
+    TenantId      UNIQUEIDENTIFIER NOT NULL,
+    PolicyId      UNIQUEIDENTIFIER NOT NULL,
+    Product       NVARCHAR(50)     NOT NULL,      -- denormalized for convenience
+    LossType      NVARCHAR(50)     NOT NULL,      -- e.g., 'glass','towing','collision','theft'
+    LossDate      DATE             NOT NULL,
+    Severity      NVARCHAR(20)     NULL,          -- 'low','med','high' (set by workflow)
+    Status        NVARCHAR(30)     NOT NULL CONSTRAINT CK_Claims_Status CHECK (Status IN ('Open','PendingApproval','Settled','Closed','Denied')),
+    EstimatedIndemnity DECIMAL(18,2) NULL,
+    Reserves      DECIMAL(18,2) NOT NULL CONSTRAINT DF_Claims_Reserves DEFAULT (0),
+    Paid          DECIMAL(18,2) NOT NULL CONSTRAINT DF_Claims_Paid DEFAULT (0),
+    WorkflowId    NVARCHAR(200)    NOT NULL,      -- pinned on create
+    WorkflowVersion INT            NOT NULL,
+    TraceUri      NVARCHAR(400)    NULL,          -- ADLS/Blob pointer to JSONL
+    CreatedAt     DATETIME2(3)     NOT NULL CONSTRAINT DF_Claims_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy     NVARCHAR(128)    NULL,
+    ModifiedAt    DATETIME2(3)     NULL,
+    ModifiedBy    NVARCHAR(128)    NULL,
+    RowVersion    ROWVERSION,
+    CONSTRAINT PK_Claims PRIMARY KEY (ClaimId),
+    CONSTRAINT FK_Claims_Tenants FOREIGN KEY (TenantId) REFERENCES ins.Tenants(TenantId),
+    CONSTRAINT FK_Claims_Policies FOREIGN KEY (PolicyId) REFERENCES ins.Policies(PolicyId)
+);
+CREATE INDEX IX_Claims_Tenant_Status ON ins.Claims(TenantId, Status);
+CREATE INDEX IX_Claims_Policy ON ins.Claims(PolicyId);
+
+CREATE TABLE ins.Approvals (
+    ApprovalId   UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Approvals_Id DEFAULT NEWID(),
+    TenantId     UNIQUEIDENTIFIER NOT NULL,
+    EntityType   NVARCHAR(30)     NOT NULL CONSTRAINT CK_Approvals_EntityType CHECK (EntityType IN ('Claim','Quote','Policy')),
+    EntityId     UNIQUEIDENTIFIER NOT NULL,
+    GateId       NVARCHAR(100)    NOT NULL,     -- workflow step id
+    Approver     NVARCHAR(256)    NOT NULL,     -- role:Supervisor or user principal
+    Status       NVARCHAR(20)     NOT NULL CONSTRAINT CK_Approvals_Status CHECK (Status IN ('Pending','Approved','Rejected','Expired')),
+    Reason       NVARCHAR(400)    NULL,
+    DecidedAt    DATETIME2(3)     NULL,
+    CreatedAt    DATETIME2(3)     NOT NULL CONSTRAINT DF_Approvals_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy    NVARCHAR(128)    NULL,
+    RowVersion   ROWVERSION,
+    CONSTRAINT PK_Approvals PRIMARY KEY (ApprovalId),
+    CONSTRAINT IX_Approvals_Entity UNIQUE (EntityType, EntityId, GateId, Approver, Status) -- helps avoid dup pendings
+);
+CREATE INDEX IX_Approvals_Tenant_Status ON ins.Approvals(TenantId, Status);
+
+CREATE TABLE ins.Payments (
+    PaymentId    UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Payments_Id DEFAULT NEWID(),
+    TenantId     UNIQUEIDENTIFIER NOT NULL,
+    ClaimId      UNIQUEIDENTIFIER NOT NULL,
+    Amount       DECIMAL(18,2)    NOT NULL CHECK (Amount >= 0),
+    Method       NVARCHAR(30)     NOT NULL,      -- 'ACH','Card','Check'
+    Status       NVARCHAR(20)     NOT NULL CONSTRAINT CK_Pay_Status CHECK (Status IN ('Initiated','Succeeded','Failed','Reversed')),
+    TxnRef       NVARCHAR(100)    NULL,
+    CreatedAt    DATETIME2(3)     NOT NULL CONSTRAINT DF_Payments_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy    NVARCHAR(128)    NULL,
+    RowVersion   ROWVERSION,
+    CONSTRAINT PK_Payments PRIMARY KEY (PaymentId),
+    CONSTRAINT FK_Payments_Claims FOREIGN KEY (ClaimId) REFERENCES ins.Claims(ClaimId)
+);
+CREATE INDEX IX_Payments_Claim ON ins.Payments(ClaimId);
+
+------------------------------------------------------------
+-- Documents & audit
+------------------------------------------------------------
+CREATE TABLE ins.Documents (
+    DocumentId   UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_Documents_Id DEFAULT NEWID(),
+    TenantId     UNIQUEIDENTIFIER NOT NULL,
+    EntityType   NVARCHAR(30)     NOT NULL CONSTRAINT CK_Doc_EntityType CHECK (EntityType IN ('Claim','Policy','Customer')),
+    EntityId     UNIQUEIDENTIFIER NOT NULL,
+    DocType      NVARCHAR(50)     NOT NULL,  -- 'photo','police_report','invoice','policy_pdf'
+    Uri          NVARCHAR(400)    NOT NULL,  -- blob path
+    CreatedAt    DATETIME2(3)     NOT NULL CONSTRAINT DF_Documents_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CreatedBy    NVARCHAR(128)    NULL,
+    CONSTRAINT PK_Documents PRIMARY KEY (DocumentId)
+);
+CREATE INDEX IX_Documents_Entity ON ins.Documents(EntityType, EntityId);
+
+CREATE TABLE ins.AuditEvents (
+    AuditId     BIGINT IDENTITY(1,1) PRIMARY KEY,
+    TenantId    UNIQUEIDENTIFIER NOT NULL,
+    EntityType  NVARCHAR(30)     NOT NULL,     -- 'Claim','Policy','Payment','Approval','Workflow'
+    EntityId    UNIQUEIDENTIFIER NULL,
+    Actor       NVARCHAR(256)    NULL,
+    Action      NVARCHAR(100)    NOT NULL,     -- 'Create','Update','Approve','Reject','ActivateWorkflow', etc.
+    PayloadJson NVARCHAR(MAX)    NULL,
+    CreatedAt   DATETIME2(3)     NOT NULL CONSTRAINT DF_AuditEvents_CreatedAt DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT CK_Audit_PayloadJson_JSON CHECK (PayloadJson IS NULL OR ISJSON(PayloadJson) = 1)
+);
+CREATE INDEX IX_Audit_Tenant_Entity ON ins.AuditEvents(TenantId, EntityType, EntityId);
+```
+
+---
+
+# 2) Stored Procedures (core flows)
+
+> All procs use robust error handling, idempotency keys where helpful, and pin the workflow version on create.
+
+## 2.1 Get active workflow version (with canary)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_GetActiveVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @RequestHash INT,  -- e.g., ABS(CHECKSUM(@SomeStableGuid)) % 100
+    @OutVersion INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    ;WITH Active AS (
+        SELECT Version, RolloutPercent
+        FROM ins.WorkflowActivations
+        WHERE TenantId = @TenantId AND Product = @Product AND WorkflowId = @WorkflowId AND Status = 'Active'
+    ),
+    Buckets AS (
+        SELECT Version,
+               RolloutPercent,
+               SUM(RolloutPercent) OVER (ORDER BY Version ROWS UNBOUNDED PRECEDING) - RolloutPercent AS StartPct,
+               SUM(RolloutPercent) OVER (ORDER BY Version ROWS UNBOUNDED PRECEDING) - 1                AS StartInclHelper -- to avoid boundary off-by-one
+        FROM Active
+    )
+    SELECT TOP 1 @OutVersion = Version
+    FROM Buckets
+    WHERE @RequestHash >= StartPct AND @RequestHash < (StartPct + RolloutPercent)
+    ORDER BY Version;
+
+    -- Fallback to highest active version if no bucket matched (e.g., percent sum < 100)
+    IF @OutVersion IS NULL
+        SELECT TOP 1 @OutVersion = Version FROM ins.WorkflowActivations
+         WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+         ORDER BY ActivatedAt DESC;
+END
+```
+
+## 2.2 Create Policy
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Policy_Create
+    @TenantId    UNIQUEIDENTIFIER,
+    @CustomerId  UNIQUEIDENTIFIER,
+    @Product     NVARCHAR(50),
+    @EffectiveDate DATE,
+    @RenewalDate   DATE = NULL,
+    @CoveragesJson NVARCHAR(MAX) = NULL,
+    @CreatedBy   NVARCHAR(128) = NULL,
+    @OutPolicyId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+    BEGIN TRAN;
+      INSERT ins.Policies (TenantId, CustomerId, Product, Status, EffectiveDate, RenewalDate, CoveragesJson, CreatedBy)
+      VALUES (@TenantId, @CustomerId, @Product, 'Active', @EffectiveDate, @RenewalDate, @CoveragesJson, @CreatedBy);
+
+      SET @OutPolicyId = SCOPE_IDENTITY(); -- not valid for GUID; use inserted table
+      SELECT @OutPolicyId = PolicyId FROM ins.Policies WHERE PolicyId = (SELECT TOP 1 PolicyId FROM ins.Policies WHERE TenantId=@TenantId AND CustomerId=@CustomerId ORDER BY CreatedAt DESC);
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Policy', @OutPolicyId, @CreatedBy, 'Create', @CoveragesJson);
+    COMMIT;
+END
+```
+
+> Note: For GUID PKs, grab with `OUTPUT` clause (see next proc). Kept here simple; below we’ll use OUTPUT properly.
+
+## 2.3 Create Claim (pins workflow version)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_Create
+    @TenantId   UNIQUEIDENTIFIER,
+    @PolicyId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @LossType   NVARCHAR(50),
+    @LossDate   DATE,
+    @EstimatedIndemnity DECIMAL(18,2) = NULL,
+    @WorkflowId NVARCHAR(200),
+    @RequestHash INT,                -- ABS(CHECKSUM(@ClaimGuid)) % 100 (computed app-side)
+    @Actor      NVARCHAR(128) = NULL,
+    @OutClaimId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    DECLARE @Version INT;
+    EXEC ins.usp_Workflow_GetActiveVersion
+        @TenantId=@TenantId, @Product=@Product, @WorkflowId=@WorkflowId, @RequestHash=@RequestHash, @OutVersion=@Version OUTPUT;
+
+    BEGIN TRAN;
+
+      DECLARE @NewClaims TABLE (ClaimId UNIQUEIDENTIFIER);
+      INSERT ins.Claims (TenantId, PolicyId, Product, LossType, LossDate, Severity, Status, EstimatedIndemnity, WorkflowId, WorkflowVersion)
+      OUTPUT inserted.ClaimId INTO @NewClaims(ClaimId)
+      VALUES (@TenantId, @PolicyId, @Product, @LossType, @LossDate, NULL, 'Open', @EstimatedIndemnity, @WorkflowId, @Version);
+
+      SELECT @OutClaimId = ClaimId FROM @NewClaims;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Claim', @OutClaimId, @Actor, 'Create',
+              JSON_OBJECT('LossType':@LossType,'LossDate':@LossDate,'EstimatedIndemnity':@EstimatedIndemnity,
+                          'WorkflowId':@WorkflowId,'Version':@Version));
+
+    COMMIT;
+END
+```
+
+## 2.4 Set/Update Trace URI for a Claim
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_SetTraceUri
+    @ClaimId  UNIQUEIDENTIFIER,
+    @TraceUri NVARCHAR(400),
+    @Actor    NVARCHAR(128) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+    UPDATE ins.Claims SET TraceUri=@TraceUri, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+     WHERE ClaimId=@ClaimId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    SELECT TenantId, 'Claim', @ClaimId, @Actor, 'SetTraceUri', JSON_OBJECT('TraceUri':@TraceUri)
+    FROM ins.Claims WHERE ClaimId=@ClaimId;
+END
+```
+
+## 2.5 Create Pending Approval
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Approval_CreatePending
+    @TenantId   UNIQUEIDENTIFIER,
+    @EntityType NVARCHAR(30),       -- 'Claim' | 'Quote' | 'Policy'
+    @EntityId   UNIQUEIDENTIFIER,
+    @GateId     NVARCHAR(100),
+    @Approver   NVARCHAR(256),
+    @Actor      NVARCHAR(128) = NULL,
+    @OutApprovalId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+    BEGIN TRAN;
+      DECLARE @New TABLE (ApprovalId UNIQUEIDENTIFIER);
+      INSERT ins.Approvals (TenantId, EntityType, EntityId, GateId, Approver, Status)
+      OUTPUT inserted.ApprovalId INTO @New(ApprovalId)
+      VALUES (@TenantId, @EntityType, @EntityId, @GateId, @Approver, 'Pending');
+
+      SELECT @OutApprovalId = ApprovalId FROM @New;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, @EntityType, @EntityId, @Actor, 'ApprovalCreated',
+              JSON_OBJECT('GateId':@GateId,'Approver':@Approver));
+    COMMIT;
+END
+```
+
+## 2.6 Decide Approval (approve/reject) with optimistic concurrency
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Approval_Decide
+    @ApprovalId UNIQUEIDENTIFIER,
+    @Decision   NVARCHAR(20),     -- 'Approved' | 'Rejected'
+    @Reason     NVARCHAR(400) = NULL,
+    @Actor      NVARCHAR(128) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+    IF @Decision NOT IN ('Approved','Rejected')
+    BEGIN
+        RAISERROR('Invalid decision', 16, 1); RETURN;
+    END
+
+    BEGIN TRAN;
+
+      UPDATE ins.Approvals
+        SET Status=@Decision, Reason=@Reason, DecidedAt=SYSUTCDATETIME()
+      WHERE ApprovalId=@ApprovalId AND Status='Pending';
+
+      IF @@ROWCOUNT = 0
+      BEGIN
+          ROLLBACK; RAISERROR('Approval not in Pending state or not found.', 16, 1); RETURN;
+      END
+
+      DECLARE @TenantId UNIQUEIDENTIFIER, @EntityType NVARCHAR(30), @EntityId UNIQUEIDENTIFIER, @GateId NVARCHAR(100);
+      SELECT @TenantId=TenantId, @EntityType=EntityType, @EntityId=EntityId, @GateId=GateId
+      FROM ins.Approvals WHERE ApprovalId=@ApprovalId;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, @EntityType, @EntityId, @Actor, CONCAT('Approval', @Decision),
+              JSON_OBJECT('ApprovalId':@ApprovalId,'GateId':@GateId,'Reason':@Reason));
+
+      -- Optional: if Claim & approved, update claim status
+      IF @EntityType='Claim' AND @Decision='Approved'
+          UPDATE ins.Claims SET Status='Open', ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor WHERE ClaimId=@EntityId AND Status='PendingApproval';
+
+      IF @EntityType='Claim' AND @Decision='Rejected'
+          UPDATE ins.Claims SET Status='Denied', ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor WHERE ClaimId=@EntityId;
+
+    COMMIT;
+END
+```
+
+## 2.7 Create Payment and roll-up totals
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Payment_Create
+    @TenantId  UNIQUEIDENTIFIER,
+    @ClaimId   UNIQUEIDENTIFIER,
+    @Amount    DECIMAL(18,2),
+    @Method    NVARCHAR(30),
+    @Status    NVARCHAR(20) = 'Initiated',
+    @TxnRef    NVARCHAR(100) = NULL,
+    @Actor     NVARCHAR(128) = NULL,
+    @OutPaymentId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    BEGIN TRAN;
+
+      DECLARE @New TABLE (PaymentId UNIQUEIDENTIFIER);
+      INSERT ins.Payments (TenantId, ClaimId, Amount, Method, Status, TxnRef, CreatedBy)
+      OUTPUT inserted.PaymentId INTO @New(PaymentId)
+      VALUES (@TenantId, @ClaimId, @Amount, @Method, @Status, @TxnRef, @Actor);
+
+      SELECT @OutPaymentId = PaymentId FROM @New;
+
+      -- If succeeded immediately, roll-up into claim
+      IF @Status = 'Succeeded'
+      BEGIN
+          UPDATE ins.Claims
+             SET Paid = Paid + @Amount, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+           WHERE ClaimId=@ClaimId;
+
+          -- Optionally settle if simple/low severity and fully paid
+          -- (leave to workflow engine normally)
+      END
+
+      -- Audit
+      DECLARE @tenantFromClaim UNIQUEIDENTIFIER = (SELECT TenantId FROM ins.Claims WHERE ClaimId=@ClaimId);
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@tenantFromClaim, 'Payment', @OutPaymentId, @Actor, 'Create',
+              JSON_OBJECT('ClaimId':@ClaimId,'Amount':@Amount,'Status':@Status,'TxnRef':@TxnRef));
+    COMMIT;
+END
+```
+
+## 2.8 Set Claim Status helper (used by workflow engine)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_SetStatus
+    @ClaimId UNIQUEIDENTIFIER,
+    @NewStatus NVARCHAR(30),    -- 'Open','PendingApproval','Settled','Closed','Denied'
+    @Actor NVARCHAR(128) = NULL,
+    @Reason NVARCHAR(400) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    IF @NewStatus NOT IN ('Open','PendingApproval','Settled','Closed','Denied')
+    BEGIN
+        RAISERROR('Invalid status',16,1); RETURN;
+    END
+
+    BEGIN TRAN;
+      UPDATE ins.Claims
+        SET Status=@NewStatus, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+      WHERE ClaimId=@ClaimId;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      SELECT TenantId, 'Claim', @ClaimId, @Actor, 'StatusChange',
+             JSON_OBJECT('NewStatus':@NewStatus,'Reason':@Reason)
+      FROM ins.Claims WHERE ClaimId=@ClaimId;
+    COMMIT;
+END
+```
+
+## 2.9 Activate / Retire Workflow Version (admin)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_ActivateVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT,
+    @RolloutPercent TINYINT,          -- 0..100
+    @ActivatedBy NVARCHAR(128) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    -- Ensure definition exists
+    IF NOT EXISTS (
+        SELECT 1 FROM ins.WorkflowDefinitions
+        WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version
+    )
+    BEGIN
+        RAISERROR('Workflow definition not found.',16,1); RETURN;
+    END
+
+    BEGIN TRAN;
+
+      INSERT ins.WorkflowActivations (TenantId, Product, WorkflowId, Version, RolloutPercent, Status, ActivatedBy)
+      VALUES (@TenantId, @Product, @WorkflowId, @Version, @RolloutPercent, 'Active', @ActivatedBy);
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Workflow', NULL, @ActivatedBy, 'ActivateWorkflow',
+              JSON_OBJECT('Product':@Product,'WorkflowId':@WorkflowId,'Version':@Version,'Percent':@RolloutPercent));
+
+    COMMIT;
+END
+```
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_RetireVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT,
+    @Actor      NVARCHAR(128) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    BEGIN TRAN;
+      UPDATE ins.WorkflowActivations
+         SET Status='Retired'
+       WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version AND Status='Active';
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Workflow', NULL, @Actor, 'RetireWorkflow',
+              JSON_OBJECT('Product':@Product,'WorkflowId':@WorkflowId,'Version':@Version));
+    COMMIT;
+END
+```
+
+## 2.10 Add Document to an Entity
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Document_Add
+    @TenantId   UNIQUEIDENTIFIER,
+    @EntityType NVARCHAR(30),     -- 'Claim'|'Policy'|'Customer'
+    @EntityId   UNIQUEIDENTIFIER,
+    @DocType    NVARCHAR(50),
+    @Uri        NVARCHAR(400),
+    @Actor      NVARCHAR(128) = NULL,
+    @OutDocumentId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+
+    BEGIN TRAN;
+      DECLARE @New TABLE (DocumentId UNIQUEIDENTIFIER);
+      INSERT ins.Documents (TenantId, EntityType, EntityId, DocType, Uri, CreatedBy)
+      OUTPUT inserted.DocumentId INTO @New(DocumentId)
+      VALUES (@TenantId, @EntityType, @EntityId, @DocType, @Uri, @Actor);
+
+      SELECT @OutDocumentId = DocumentId FROM @New;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, @EntityType, @EntityId, @Actor, 'AddDocument',
+              JSON_OBJECT('DocType':@DocType,'Uri':@Uri));
+    COMMIT;
+END
+```
+
+## 2.11 Read Claim (detail)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_Get
+    @ClaimId UNIQUEIDENTIFIER
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT c.*, p.Product AS PolicyProduct, cust.FullName AS CustomerName
+    FROM ins.Claims c
+    JOIN ins.Policies p  ON p.PolicyId = c.PolicyId
+    JOIN ins.Customers cust ON cust.CustomerId = p.CustomerId
+    WHERE c.ClaimId = @ClaimId;
+
+    SELECT a.* FROM ins.Approvals a WHERE a.EntityType='Claim' AND a.EntityId=@ClaimId;
+    SELECT py.* FROM ins.Payments  py WHERE py.ClaimId=@ClaimId;
+    SELECT d.*  FROM ins.Documents d WHERE d.EntityType='Claim' AND d.EntityId=@ClaimId;
+END
+```
+
+---
+
+# 3) Helpful Indexes & JSON patterns
+
+```sql
+-- Example: computed column over JSON (if you often filter by deductible)
+ALTER TABLE ins.Policies
+ADD Deductible_Comp AS TRY_CONVERT(DECIMAL(18,2), JSON_VALUE(CoveragesJson, '$.auto.deductible')) PERSISTED;
+CREATE INDEX IX_Policies_Deductible ON ins.Policies(Deductible_Comp);
+
+-- Fast “open approvals” per tenant
+CREATE INDEX IX_Approvals_Pending ON ins.Approvals(TenantId, Status) WHERE Status='Pending';
+```
+
+---
+
+# 4) Example usage
+
+```sql
+-- Create a claim & pin workflow version
+DECLARE @ClaimId UNIQUEIDENTIFIER, @Tenant UNIQUEIDENTIFIER = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE';
+DECLARE @Policy UNIQUEIDENTIFIER = '11111111-2222-3333-4444-555555555555';
+
+-- Ensure a workflow definition & activation exist (usually done by admin tooling)
+-- EXEC ins.usp_Workflow_ActivateVersion @Tenant, 'auto', 'claims.fnol.auto', 3, 100, 'ops@insurer.com';
+
+-- Hash bucket for canary (client typically computes ABS(CHECKSUM(@ClaimGuid)) % 100)
+DECLARE @RequestHash INT = 42;
+
+EXEC ins.usp_Claim_Create
+  @TenantId=@Tenant,
+  @PolicyId=@Policy,
+  @Product='auto',
+  @LossType='glass',
+  @LossDate=GETUTCDATE(),
+  @EstimatedIndemnity=180.00,
+  @WorkflowId='claims.fnol.auto',
+  @RequestHash=@RequestHash,
+  @Actor='api@system',
+  @OutClaimId=@ClaimId OUTPUT;
+
+-- Create pending approval (if workflow gated)
+DECLARE @ApprovalId UNIQUEIDENTIFIER;
+EXEC ins.usp_Approval_CreatePending @Tenant, 'Claim', @ClaimId, 'approvalGate', 'role:Supervisor', 'api@system', @ApprovalId OUTPUT;
+
+-- Approver decides
+EXEC ins.usp_Approval_Decide @ApprovalId, 'Approved', 'OK to pay', 'supervisor@insurer.com';
+
+-- Create payment
+DECLARE @PaymentId UNIQUEIDENTIFIER;
+EXEC ins.usp_Payment_Create @Tenant, @ClaimId, 180.00, 'ACH', 'Succeeded', 'TX123', 'api@payments', @PaymentId OUTPUT;
+
+-- Close/settle claim
+EXEC ins.usp_Claim_SetStatus @ClaimId, 'Settled', 'api@system', 'Auto glass settled';
+```
+
+---
+
+## Notes / Extensions
+
+* **Idempotency:** add an optional `@IdemKey` to write tables and unique index on `(EntityType, EntityId, IdemKey)` for safe retries.
+* **PII controls:** mask in `AuditEvents.PayloadJson` if needed; gate raw access by role.
+* **Row-level security:** if you multi-tenant by TenantId, add RLS predicates.
+* **Temporal tables:** enable on `Claims`, `Policies` if you want built-in history.
+* **Performance:** for large volumes, consider partitioning `Claims` by `CreatedAt` month.
+
+---
+
+If you want, I can also add:
+
+* SQL **views** for dashboards (e.g., SLA breaches, STP rate),
+* A **CDC/Change Tracking** setup for downstream analytics,
+* Or a minimal **EF Core** model scaffold to match these tables.
