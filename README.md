@@ -51,7 +51,7 @@ alt Approval gate required?
     WF->>DB: UPDATE Approval + Request status
     WF->>TR: Append trace("approval", decision)
   else No approval needed
-    Note over WF: Gate skipped; continue execution
+    Note over WF: Gate skipped continue execution
   end
 
   ```
