@@ -153,15 +153,165 @@ A **rules-defined, agent-rendered** platform: business rules and UI models live 
 ---
 
 
-## Personas
+awesome — here’s a crisp, detailed expansion of the **personas** your platform serves. Each persona ties directly to the JSON-rules engine, AI-generated UI, and REST API surface you’ve designed.
 
-* **Customer/Policyholder** (FNOL, endorsements, status tracking)
-* **Agent/Broker** (quote, bind, endorsements)
-* **Underwriter** (risk selection, referrals)
-* **Adjuster** (assignment, reserves, settlement)
-* **SIU/Fraud Analyst** (investigate flagged claims)
-* **Ops Admin / Product Owner** (edits JSON rules, canary & rollback)
-* **Compliance/Audit** (traceability, regulatory exports)
+---
+
+# Personas (Detailed)
+
+## 1) Customer / Policyholder
+
+* **Primary goals:** Report a loss (FNOL) fast, check claim status, upload docs/photos, receive payments quickly, request endorsements.
+* **Critical decisions:** Confirm loss facts, select coverage options (deductible acknowledgement), accept settlement.
+* **Typical inputs/outputs:** Loss type/date/location, photos, police report; outputs = claim ID, SLA clock, settlement status, payment confirmation.
+* **Key UI (AI-generated from `uiModel`):** Guided FNOL form/chat, document upload, status timeline, settlement acceptance, bank details capture.
+* **Workflow touchpoints:** Triggers `Claim.Created`; may pass `approvalGate` if injuries/high indemnity; can accept instant-pay.
+* **Integrations:** eSign for releases, payments (ACH/Card), notifications (email/SMS).
+* **Security:** B2C login, PII masking; can see **only** their policy/claim.
+* **KPIs:** NIGO rate ↓, FNOL time ↓, satisfaction/NPS ↑.
+
+## 2) Agent / Broker
+
+* **Primary goals:** Create quotes, bind policies, submit FNOL on behalf of insureds, track book of business.
+* **Critical decisions:** Coverage selections, endorsement requests, bind decision after price disclosure.
+* **Inputs/outputs:** Prospect demographics/vehicle/home, prior losses; outputs = quote/premium, referral status, bind confirmation.
+* **Key UI:** Quote wizard, comparison of coverages, bind & payment, endorsement forms, portfolio dashboard.
+* **Workflow touchpoints:** `Quote.Created` → underwriting referral gate if thresholds hit; `Policy.Bind` after payment OK.
+* **Integrations:** Payment tokenization, rating/price service, document generation (policy PDF).
+* **Security:** Role = `Agent`; scoped to assigned customers; audit on premium overrides.
+* **KPIs:** Bind rate ↑, quote turnaround ↓, referral rate ↓ without loss of quality.
+
+## 3) Underwriter
+
+* **Primary goals:** Evaluate risk, apply pricing/terms, clear referrals, enforce appetite & guidelines.
+* **Critical decisions:** Accept/decline, apply surcharges/credits, request additional docs, set special conditions.
+* **Inputs/outputs:** Referral packet (normalized data, risk score, prior losses, photos); outputs = decision, terms, notes.
+* **Key UI:** Referral inbox, risk score explainability, document viewer, decision panel with rule references.
+* **Workflow touchpoints:** Handles `gate:UnderwritingReferral`; decision resumes workflow (approve/reject/needs info).
+* **Integrations:** External data (MVR, CLUE, property data), pricing/raters, document AI for attachments.
+* **Security:** Role = `Underwriter`; can view/annotate risk factors; cannot alter payments.
+* **KPIs:** Referral cycle time ↓, decision quality (loss ratio), guideline adherence.
+
+## 4) Adjuster (Claim Handler)
+
+* **Primary goals:** Verify coverage, set reserves, coordinate estimates/repairs, settle fairly and quickly.
+* **Critical decisions:** Coverage confirmation, reserve levels, pay/deny/defer, salvage/subrogation initiation.
+* **Inputs/outputs:** FNOL packet, estimates, medical/bodily injury docs; outputs = reserve changes, payment approvals, settlement terms.
+* **Key UI:** Work queue by severity/SLA, claim timeline, reserve & payment panels, communications log.
+* **Workflow touchpoints:** Picks up non-STP claims, completes tasks posted by `route` steps, triggers `approvalGate` where needed.
+* **Integrations:** Estimating vendors, repair networks, medical review, payments.
+* **Security:** Role = `Adjuster`; access limited by region/LOB; full audit trail on status or reserve changes.
+* **KPIs:** Cycle time ↓, re-opens ↓, leakage ↓, SLA attainment ↑.
+
+## 5) Claims Supervisor (Team Lead)
+
+* **Primary goals:** Manage workload, approve exceptions, ensure SLA compliance, escalate when at risk.
+* **Critical decisions:** Approve high indemnity/total loss/legal involvement; reassign workloads; override rules in rare cases.
+* **Inputs/outputs:** Approval tasks with context & recommendations; outputs = approve/reject with reason, reassignment actions.
+* **Key UI:** Approval inbox with timers, team capacity view, SLA breach dashboard, override panel with guardrails.
+* **Workflow touchpoints:** Owner of `approvalGate` for claims; escalation routes/timeouts.
+* **Security:** Role = `Supervisor`; can approve gates and reassign; override reasons required & audited.
+* **KPIs:** Approval latency ↓, SLA breaches ↓, queue balance/aging ↓.
+
+## 6) SIU / Fraud Analyst
+
+* **Primary goals:** Investigate fraud signals, hold suspicious payments, coordinate with legal.
+* **Critical decisions:** Place claim on hold, request additional verification, clear or refer to authorities.
+* **Inputs/outputs:** ML anomaly scores, rule hits (red flags), network graphs; outputs = disposition (clear/confirmed/ongoing), notes, holds.
+* **Key UI:** Fraud queue, score explanation, link analysis, hold/release actions.
+* **Workflow touchpoints:** `gate:FraudReview` fires on thresholds; can pause `instantPay`; resume on clear.
+* **Integrations:** OSINT, consortium data, device intelligence.
+* **Security:** Role = `SIU`; restricted PII; strong audit on holds and releases.
+* **KPIs:** Confirmed fraud detection ↑, false positives ↓, time-to-disposition ↓.
+
+## 7) Ops Admin / Product Owner (Rules & UI)
+
+* **Primary goals:** Change business rules and UI **without code**; canary & rollback; enforce governance.
+* **Critical decisions:** SLA/pricing thresholds, approval chains, notification templates, `uiModel` field visibility.
+* **Inputs/outputs:** Proposed JSON (workflow + `uiModel`), simulator results; outputs = activated version with rollout %.
+* **Key UI:** Rule editor (JSON + schema validation), dry-run simulator, diff/compare, activation panel (canary %).
+* **Workflow touchpoints:** Publishes `WorkflowDefinitions`; activates in `WorkflowActivations`; changes take effect on **new** items.
+* **Security:** Role = `WorkflowAdmin`; dual-control for production activations; full audit (who/what/when/why).
+* **KPIs:** Change lead time ↓, rollback MTTR ↓, policy compliance (lint pass rate) ↑.
+
+## 8) Compliance / Audit
+
+* **Primary goals:** Reconstruct “why/how” of any decision; verify adherence to regs; handle complaints and subpoenas.
+* **Critical decisions:** Approve procedures, release audit packages, require corrective actions.
+* **Inputs/outputs:** Decision traces (JSONL), pinned versions, approval logs; outputs = audit reports, remediation tickets.
+* **Key UI:** Searchable audit console (by entity/date/actor), one-click “replay” view of steps & rules; export to PDF/CSV.
+* **Workflow touchpoints:** Read-only access to traces & versions; no influence on runtime.
+* **Security:** Role = `Auditor`; PII unmask with justification; everything logged.
+* **KPIs:** Time to produce audit pack ↓, % reproducible decisions = 100%, findings ↓.
+
+---
+
+## Adjacent/supporting roles (brief)
+
+* **Billing & Payments Ops:** reconciles payouts, handles reversals/chargebacks; UI = payment ledger; RBAC = `PaymentsOps`.
+* **IT / SRE:** uptime, scaling, observability, policy enforcement; RBAC = `PlatformOperator`.
+
+---
+
+# Persona ↔ Workflow/API Mapping (Quick Matrix)
+
+| Persona     | Typical Actions                             | Key Endpoints                                                           | Notable Gates/Steps                   |
+| ----------- | ------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------- |
+| Customer    | Create FNOL, upload docs, accept settlement | `POST /claims`, `GET /claims/{id}`, `POST /claims/{id}/accept`          | `classify`, `instantPay`, `notify`    |
+| Agent       | Quote, bind, endorse                        | `POST /quotes`, `POST /quotes/{id}/bind`, `POST /policies/{id}/endorse` | `compute(price)`, `gate:Underwriting` |
+| Underwriter | Clear referrals, adjust terms               | `POST /quotes/{id}/uw-decide`                                           | `gate:UnderwritingReferral`           |
+| Adjuster    | Set reserves, approve payments              | `POST /claims/{id}/tasks`, `POST /payments`                             | `route(team)`, `gate:Supervisor`      |
+| Supervisor  | Approve exceptions, reassign                | `POST /approvals/{id}/decide`, `POST /claims/{id}/reassign`             | `approvalGate`                        |
+| SIU         | Hold/release, disposition                   | `POST /claims/{id}/siu-hold`, `POST /claims/{id}/siu-clear`             | `gate:FraudReview`                    |
+| Ops Admin   | Activate rules/UI                           | `POST /workflows`, `POST /workflows/{id}:activate`                      | Version pinning/canary                |
+| Auditor     | Retrieve traces                             | `GET /requests/{id}/trace`                                              | Read-only                             |
+
+---
+
+# Swimlane (who touches what in a gated claim)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Cust as Customer
+  participant Agent as Agent/Broker
+  participant WF as Workflow Engine
+  participant Sup as Claims Supervisor
+  participant UW as Underwriter
+  participant SIU as SIU
+  participant Pay as Payments
+
+  Cust->>WF: FNOL (AI-guided intake)
+  WF->>WF: classify/compute/route (JSON steps)
+  alt Fraud or High Indemnity
+    WF->>SIU: gate:FraudReview (hold)
+    SIU-->>WF: clear or escalate
+  end
+  alt Underwriting needed (endorsement/edge)
+    WF->>UW: gate:UnderwritingReferral
+    UW-->>WF: approve with terms / reject
+  end
+  alt Supervisor approval
+    WF->>Sup: gate:Supervisor
+    Sup-->>WF: approve/reject with reason
+  end
+  WF->>Pay: instantPay or scheduled payment
+  Pay-->>WF: confirmation
+  WF-->>Cust: status update / settlement
+  Agent-->>WF: (optional) assists, attaches docs
+```
+
+---
+
+# Data & Permissions (at a glance)
+
+* **Row-level security:** `TenantId` filter for all business tables; persona roles scoped by LOB/region where needed.
+* **Audit invariants:** Any **decision** (approve/reject, status change, reserve change, payment) must log to `ins.AuditEvents`.
+* **Privacy:** PII masked by default in traces; `Auditor` can unmask with justification.
+
+---
+
+If you want next, I can generate **persona-specific UI snippets** from a `uiModel` (e.g., Underwriter referral panel), or **role-based API Postman collections** mapped to these actions.
 
 ## Outcomes & KPIs
 
