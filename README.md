@@ -54,4 +54,25 @@ alt Approval gate required?
     Note over WF: Gate skipped continue execution
   end
 
+%% --- Scheduling / external calls ---
+  WF->>SCH: POST /schedule/suggest {team, skills, sla}
+  SCH-->>WF: Candidate slots
+  WF->>SCH: POST /schedule/book {slot}
+  SCH-->>WF: eventId
+  WF->>TR: Append trace("schedule", eventId)
+
+  %% --- Notifications & response ---
+  WF->>NT: Send confirmations (customer/agent)
+  WF->>DB: UPDATE Request (status=Scheduled/InProgress)
+  WF-->>APIM: 201 Created (id, priority, SLA, schedule)
+  APIM-->>UR: Response
+  UR-->>U: Show confirmation (tracking, SLA timer)
+
+  %% --- Closure (later) ---
+  U->>APIM: POST /requests/{id}/close {resolution}
+  APIM->>WF: Close request
+  WF->>DB: UPDATE Request (Closed)
+  WF->>TR: Append trace("closed")
+  WF->>NT: Send survey/invoice
+
   ```
