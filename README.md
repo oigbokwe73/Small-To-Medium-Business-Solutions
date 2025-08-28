@@ -36,7 +36,7 @@ sequenceDiagram
   WF->>TR: Append trace "created", input snapshot
 
   %% --- Workflow evaluation ---
-  WF->>WF: Evaluate steps switch/compute/route
+  WF-->>WF: Evaluate steps switch/compute/route
   WF->>TR: Append trace "classify","price","route"
 
   alt Approval gate required?
