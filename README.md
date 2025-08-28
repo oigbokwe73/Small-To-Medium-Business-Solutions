@@ -1280,8 +1280,448 @@ EXEC ins.usp_Claim_SetStatus @ClaimId, 'Settled', 'api@system', 'Auto glass sett
 
 ---
 
-If you want, I can also add:
+Awesome—here’s a **build-ready catalog** of REST endpoints for the insurance platform, grouped by domain, with **sample request payloads** (and concise notes). Use a common base like `https://api.example.com/v1`.
 
-* SQL **views** for dashboards (e.g., SLA breaches, STP rate),
-* A **CDC/Change Tracking** setup for downstream analytics,
-* Or a minimal **EF Core** model scaffold to match these tables.
+# Conventions (applies to all)
+
+Headers (recommended):
+
+```
+Authorization: Bearer <JWT>
+Content-Type: application/json
+X-Idempotency-Key: <uuid>        # for POST/PATCH that create/change state
+X-Correlation-Id: <uuid>         # for tracing across services
+```
+
+---
+
+# 1) Workflows & UI Models
+
+### Get active workflow + uiModel (pinned by tenant/product)
+
+`GET /workflows/{workflowId}/active?tenantId={tid}&product={lob}`
+*No request body (querystring only).*
+
+### Register a workflow **version** (metadata points to immutable JSON in storage)
+
+`POST /workflows/{workflowId}/versions`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "product": "auto",
+  "version": 3,
+  "storageUrl": "https://storage.blob.core.windows.net/workflows/claims.fnol.auto/v3.json",
+  "sha256": "a2f7...e91c",
+  "notes": "Adds instantPay path for glass and towing",
+  "createdBy": "rules-admin@insurer.com"
+}
+```
+
+### Activate a workflow version (supports canary rollout)
+
+`POST /workflows/{workflowId}/activate`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "product": "auto",
+  "version": 3,
+  "rolloutPercent": 25,
+  "activatedBy": "rules-admin@insurer.com"
+}
+```
+
+### Retire a workflow version
+
+`POST /workflows/{workflowId}/retire`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "product": "auto",
+  "version": 2,
+  "actor": "rules-admin@insurer.com",
+  "reason": "Superseded by v3"
+}
+```
+
+---
+
+# 2) Claims (FNOL → Settlement)
+
+### Create a claim (FNOL)
+
+`POST /claims`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "policyId": "11111111-2222-3333-4444-555555555555",
+  "product": "auto",
+  "lossType": "glass",
+  "lossDate": "2025-08-25",
+  "estimatedIndemnity": 180.00,
+  "workflowId": "claims.fnol.auto",
+  "intake": {
+    "channel": "portal",
+    "contact": { "name": "Alex Carter", "email": "alex@example.com", "phone": "+1-215-555-0101" },
+    "location": { "city": "Philadelphia", "region": "PA", "country": "US" }
+  },
+  "attachments": [
+    { "docType": "photo", "uri": "https://blob/claims/tmp/abc.jpg" }
+  ]
+}
+```
+
+### Get a claim (detail)
+
+`GET /claims/{claimId}`
+*No request body.*
+
+### Update claim facts (minor corrections)
+
+`PATCH /claims/{claimId}`
+
+```json
+{
+  "estimatedIndemnity": 220.00,
+  "lossType": "glass",
+  "note": "Added additional chip on windshield reported by customer"
+}
+```
+
+### Customer accepts settlement (for STP/instantPay flows)
+
+`POST /claims/{claimId}/accept`
+
+```json
+{
+  "acceptedBy": "alex@example.com",
+  "acceptanceText": "I accept the settlement of $180",
+  "acceptanceAt": "2025-08-28T17:12:04Z"
+}
+```
+
+### Supervisor places SIU hold (fraud review)
+
+`POST /claims/{claimId}/siu-hold`
+
+```json
+{
+  "actor": "siu-analyst@insurer.com",
+  "reason": "Anomaly score high; photo EXIF mismatch",
+  "until": "2025-09-05T00:00:00Z"
+}
+```
+
+### Clear SIU hold
+
+`POST /claims/{claimId}/siu-clear`
+
+```json
+{
+  "actor": "siu-analyst@insurer.com",
+  "disposition": "cleared",
+  "notes": "Verified ownership and timestamp; proceed"
+}
+```
+
+### Manually set claim status (used by engine/admin tools)
+
+`POST /claims/{claimId}/status`
+
+```json
+{
+  "newStatus": "Settled",
+  "reason": "Instant payment succeeded",
+  "actor": "system@workflow"
+}
+```
+
+---
+
+# 3) Approvals (Gates)
+
+### Create a pending approval (usually engine-initiated)
+
+`POST /approvals`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "entityType": "Claim",
+  "entityId": "3e7b9c93-8f1a-47a2-b7d3-1a7a3a2e1b44",
+  "gateId": "approvalGate",
+  "approver": "role:Supervisor",
+  "context": {
+    "severity": "high",
+    "estimatedIndemnity": 5200.00,
+    "coverage": { "deductible": 500, "limit": 10000 }
+  }
+}
+```
+
+### Decide approval (approve/reject)
+
+`POST /approvals/{approvalId}/decide`
+
+```json
+{
+  "decision": "Approved",
+  "reason": "Within reserve authority; proceed to payment",
+  "actor": "supervisor@insurer.com"
+}
+```
+
+---
+
+# 4) Payments
+
+### Create a payment against a claim
+
+`POST /claims/{claimId}/payments`
+
+```json
+{
+  "amount": 180.00,
+  "method": "ACH",
+  "remitTo": {
+    "name": "Alex Carter",
+    "account": "****4321",
+    "routing": "*****123"
+  },
+  "memo": "Auto glass settlement",
+  "requester": "system@workflow"
+}
+```
+
+### Confirm/settle a payment (callback from PSP or internal ops)
+
+`POST /payments/{paymentId}/confirm`
+
+```json
+{
+  "status": "Succeeded",
+  "txnRef": "PSP-9F2A3C",
+  "confirmedAt": "2025-08-28T17:20:10Z",
+  "actor": "payments@processor"
+}
+```
+
+---
+
+# 5) Documents
+
+### Register an existing document (blob already uploaded)
+
+`POST /documents`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "entityType": "Claim",
+  "entityId": "3e7b9c93-8f1a-47a2-b7d3-1a7a3a2e1b44",
+  "docType": "police_report",
+  "uri": "https://storage.blob.core.windows.net/docs/claims/3e7b9c93/report.pdf",
+  "uploadedBy": "agent@broker.com"
+}
+```
+
+### (Optional) Get pre-signed upload URL (direct-to-blob pattern)
+
+`POST /documents:presign`
+
+```json
+{
+  "entityType": "Claim",
+  "entityId": "3e7b9c93-8f1a-47a2-b7d3-1a7a3a2e1b44",
+  "docType": "photo",
+  "contentType": "image/jpeg",
+  "fileName": "windshield1.jpg"
+}
+```
+
+---
+
+# 6) Quotes & Policies
+
+### Create a quote
+
+`POST /quotes`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "product": "auto",
+  "prospect": {
+    "name": "Jordan Lee",
+    "email": "jordan@example.com",
+    "address": { "city": "Phoenix", "region": "AZ", "postalCode": "85001", "country": "US" }
+  },
+  "risk": {
+    "drivers": [{ "dob": "1992-03-12", "licenseState": "AZ" }],
+    "vehicles": [{ "vin": "1HGCM82633A004352", "garagingZip": "85001" }],
+    "priorLosses": 0
+  },
+  "coverages": { "bodilyInjury": 100000, "propertyDamage": 50000, "deductible": 500 },
+  "workflowId": "quotes.auto.default"
+}
+```
+
+### Bind a quote (issue policy)
+
+`POST /quotes/{quoteId}/bind`
+
+```json
+{
+  "payment": {
+    "method": "Card",
+    "token": "tok_1QwErTy...",
+    "amount": 1230.00
+  },
+  "acceptDisclosures": true,
+  "actor": "agent@broker.com"
+}
+```
+
+### Get a quote
+
+`GET /quotes/{quoteId}`
+*No request body.*
+
+### Get a policy
+
+`GET /policies/{policyId}`
+*No request body.*
+
+### Endorse a policy (mid-term change)
+
+`POST /policies/{policyId}/endorse`
+
+```json
+{
+  "changes": {
+    "drivers": [{ "add": { "dob": "2004-06-01", "licenseState": "AZ" } }],
+    "coverages": { "deductible": 1000 }
+  },
+  "effectiveDate": "2025-10-01",
+  "reason": "Add new driver; adjust deductible",
+  "workflowId": "endorsements.auto.v1",
+  "submittedBy": "agent@broker.com"
+}
+```
+
+---
+
+# 7) Traces & Audit
+
+### Get decision trace for an entity (e.g., claim)
+
+`GET /claims/{claimId}/trace`
+*No body. Returns JSONL or structured JSON; gated by `Auditor` role.*
+
+### Search audit events
+
+`POST /audit/search`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "filters": {
+    "entityType": "Claim",
+    "entityId": "3e7b9c93-8f1a-47a2-b7d3-1a7a3a2e1b44",
+    "actions": ["Create","ApprovalApproved","StatusChange"],
+    "dateFrom": "2025-08-01",
+    "dateTo": "2025-08-31"
+  },
+  "page": { "size": 50, "cursor": null }
+}
+```
+
+---
+
+# 8) Scheduling (repair/vendor—optional but common)
+
+### Suggest slots (team/skills/SLA)
+
+`POST /schedule/suggest`
+
+```json
+{
+  "team": "GlassRepair",
+  "skills": ["windshield"],
+  "region": "PA",
+  "slaHours": 24,
+  "windowFrom": "2025-08-28T18:00:00Z",
+  "windowTo": "2025-08-30T18:00:00Z"
+}
+```
+
+### Book a slot
+
+`POST /schedule/book`
+
+```json
+{
+  "requestId": "3e7b9c93-8f1a-47a2-b7d3-1a7a3a2e1b44",
+  "slot": "2025-08-28T21:00:00Z",
+  "resourceId": "tech-42"
+}
+```
+
+---
+
+# 9) Catalog / Lookups (for UI agents)
+
+### Loss types / coverage options (per product/tenant)
+
+`GET /catalog/loss-types?tenantId={tid}&product={lob}`
+`GET /catalog/coverages?tenantId={tid}&product={lob}`
+*No request body.*
+
+---
+
+# 10) Admin / Tenants / Customers (essentials)
+
+### Create tenant
+
+`POST /tenants`
+
+```json
+{
+  "name": "Contoso Insurance",
+  "status": "Active",
+  "createdBy": "platform-admin@insurer.com"
+}
+```
+
+### Create customer (policyholder)
+
+`POST /customers`
+
+```json
+{
+  "tenantId": "f2b9e1f0-1b1c-4a10-9f7b-2f8d7b2e2a10",
+  "externalRef": "CRM-78421",
+  "fullName": "Alex Carter",
+  "email": "alex@example.com",
+  "phone": "+1-215-555-0101",
+  "address1": "123 Market St",
+  "city": "Philadelphia",
+  "region": "PA",
+  "postalCode": "19106",
+  "country": "US"
+}
+```
+
+---
+
+## Tips for Implementation
+
+* **Idempotency:** send `X-Idempotency-Key` on POSTs; the service should return the same resource on retries.
+* **Validation:** validate request bodies against JSON Schemas derived from `uiModel` and domain contracts.
+* **Version pinning:** on create endpoints (`/claims`, `/quotes`, `/policies/{id}/endorse`) include `workflowId`; the engine pins the active version and writes it into the entity.
+* **RBAC:** enforce roles (`Customer`, `Agent`, `Adjuster`, `Underwriter`, `Supervisor`, `SIU`, `WorkflowAdmin`, `Auditor`) at the gateway.
+
+If you want, I can bundle these into an **OpenAPI 3.0 YAML** (with schemas) or a **Postman collection** so you can hit the ground running.
