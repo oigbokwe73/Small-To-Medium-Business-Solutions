@@ -109,7 +109,7 @@ sequenceDiagram
   WF->>TR: Trace input snapshot
   WF->>PR: Verify coverage/deductible
   PR-->>WF: Coverage OK, deductible $200
-  WF->>WF: Classify severity → "low"; compute pay <= limit
+  WF->>WF: Classify severity → "low" compute pay <= limit
   alt Gate not required
     WF->>PAY: Create instant payment
     PAY-->>WF: Payment confirmation
