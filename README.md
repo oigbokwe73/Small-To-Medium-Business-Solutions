@@ -738,7 +738,7 @@ customEvents
 
 # Phased Rollout
 
-**MVP (8–12 weeks)**
+**MVP (0–2 weeks)**
 
 * FNOL for auto glass & towing (highest STP), Payments integration, Notifications
 * Quote for personal auto (no referrals), Bind + payment
