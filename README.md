@@ -300,6 +300,41 @@ sequenceDiagram
   WF-->>Cust: status update / settlement
   Agent-->>WF: (optional) assists, attaches docs
 ```
+Absolutely—here are clear, step-by-step tables explaining **each** of the sequence diagrams we discussed.
+
+
+---
+
+# 2) FNOL Straight-Through (low-severity glass) (F1–F16)
+
+| Step | From → To                      | What happens                                      | Why (purpose)                         | Key data / artifacts           |
+| ---- | ------------------------------ | ------------------------------------------------- | ------------------------------------- | ------------------------------ |
+| F1   | Customer → AI Agent            | “Start FNOL.”                                     | Begin guided loss intake.             | Session, intent.               |
+| F2   | AI Agent → Workflow Store      | Get active `uiModel` + workflow.                  | Render right form for product/region. | Workflow+UI JSON (version).    |
+| F3   | Store → AI Agent               | Return definitions.                               | Provide render/rules.                 | Version N.                     |
+| F4   | AI Agent → UI Renderer         | Emit UI spec (fields, showIf).                    | Build dynamic intake.                 | Components, visibility rules.  |
+| F5   | Customer → UI Renderer         | Fill details, upload photos.                      | Capture evidence quickly.             | Loss type/date, images.        |
+| F6   | UI Renderer → Doc Intelligence | Extract metadata (optional).                      | Pre-fill & verify facts.              | Timestamps, objects, EXIF.     |
+| F7   | UI Renderer → API Gateway      | `POST /claims` with payload + DI results.         | Create claim.                         | JWT, payload, files’ URIs.     |
+| F8   | Gateway → Workflow API         | Forward request.                                  | Reach engine.                         | Auth ctx + body.               |
+| F9   | Workflow API → Store           | Load & **pin** workflow version.                  | Audit/replay later.                   | `claims.fnol.auto@vN`.         |
+| F10  | Workflow API → Trace Store     | Trace input snapshot.                             | Evidence trail.                       | JSONL line #1.                 |
+| F11  | Workflow API → Policy/Rating   | Verify coverage/deductible.                       | Eligibility & amounts.                | Coverage OK; deductible \$200. |
+| F12  | Policy/Rating → Workflow API   | Return coverage check result.                     | Continue decisioning.                 | Limits/deductible.             |
+| F13  | Workflow API (self)            | Classify severity; compute pay.                   | Decide STP vs manual.                 | Severity = “low”, pay ≤ limit. |
+| F14a | Workflow API → Payments        | **Instant pay** (if STP).                         | Delight customer, reduce cycle time.  | Payout request.                |
+| F15a | Payments → Workflow API        | Payment confirmation.                             | Ensure funds moved.                   | TxnRef/status.                 |
+| F16a | Workflow API → DB/Notif/UI     | Persist claim + payment; notify; **201 Created**. | Close case STP.                       | Claim id, settled flag.        |
+| F14b | Workflow API → DB              | Create approval task (if gated).                  | Human review needed.                  | Approval row.                  |
+| F15b | Workflow API → Notifications   | Notify adjuster/supervisor.                       | Prompt action.                        | Gate deeplink.                 |
+| F16b | Workflow API → UI              | **202 Accepted** (awaiting review).               | Show pending state.                   | Gate info, SLA timer.          |
+
+*(a = STP branch, b = gated branch)*
+
+
+---
+
+If you want, I can drop these tables into your **Postman request descriptions** (so each step explanation is right next to the corresponding calls), or export them into a printable PDF cheat-sheet.
 
 ---
 
@@ -416,6 +451,39 @@ sequenceDiagram
     WF-->>R: 202 Accepted (awaiting review)
   end
 ```
+---
+
+# 1) AI-assisted Intake → API → Workflow (S1–S25)
+
+| Step | From → To                     | What happens                                          | Why (purpose)                   | Key data / artifacts                 |
+| ---- | ----------------------------- | ----------------------------------------------------- | ------------------------------- | ------------------------------------ |
+| S1   | User → AI Agent               | User starts a new request (“create\_request”).        | Kick off guided capture.        | Intent name, session id.             |
+| S2   | AI Agent → Workflow Store     | Fetch active `uiModel` + workflow for tenant/product. | Get single source of truth.     | `workflowId`, `product`, `tenantId`. |
+| S3   | Workflow Store → AI Agent     | Return `uiModel`, rules, version.                     | Provide render + rule context.  | JSON (versioned).                    |
+| S4   | AI Agent → UI Generator       | Produce component spec from `uiModel`.                | Define the actual UI.           | Layout, fields, showIf/requiredIf.   |
+| S5   | UI Generator → Renderer       | Render dynamic form.                                  | Present inputs with validation. | Rendered controls, hints.            |
+| S6   | User → AI Agent               | User answers questions / uploads docs.                | Collect facts efficiently.      | Field values, files.                 |
+| S7   | AI Agent → Renderer           | Normalizes values, provides suggestions.              | Reduce user effort/typos.       | Normalized state.                    |
+| S8   | Renderer → Validator          | Client-side validate.                                 | Catch issues early.             | Types, ranges, requiredIf.           |
+| S9   | Validator → Renderer          | Return per-field errors/OK.                           | Feedback loop.                  | Error list.                          |
+| S10  | User → Renderer               | Submit.                                               | Move to server workflow.        | Final payload.                       |
+| S11  | Renderer → API Gateway        | `POST /requests` (or domain create).                  | Enter backend safely.           | JWT, idempotency key.                |
+| S12  | Gateway → Identity            | Validate token/scopes.                                | Security gate.                  | Principal/roles.                     |
+| S13  | Gateway → Workflow API        | Forward request.                                      | Reach engine.                   | Payload + auth ctx.                  |
+| S14  | Workflow API → Workflow Store | Load & **pin** active version.                        | Auditability/replay.            | `workflowId@version`.                |
+| S15  | Workflow API → Validator      | Server-side schema validation.                        | Enforce contract.               | Schema derived from `uiModel`.       |
+| S16  | Workflow API → Renderer       | 400 with errors (if invalid).                         | Return actionable fixes.        | Field paths/messages.                |
+| S17  | Workflow API → DB             | Persist request row.                                  | Durable state.                  | Request id, workflow ref.            |
+| S18  | Workflow API → Trace Store    | Write step trace snapshot.                            | Explainability/audit.           | JSONL trace entry.                   |
+| S19  | Workflow API → DB             | Create **PendingApproval** (if needed).               | Human-in-loop.                  | Approval row(s).                     |
+| S20  | Workflow API → Notifications  | Notify approvers (email/Teams/etc.).                  | Fast decisions.                 | Deep-link to approve/reject.         |
+| S21  | Workflow API → Renderer       | **202 Accepted** awaiting approval.                   | Show status & SLA.              | Gate info, timers.                   |
+| S22  | Workflow API → Scheduler      | Suggest/book slot (if no gate).                       | Automate fulfillment.           | Team/skills/SLA window.              |
+| S23  | Scheduler → Workflow API      | Return reserved slot.                                 | Confirm scheduling.             | Slot id/time/resource.               |
+| S24  | Workflow API → Notifications  | Confirm to user/agent.                                | Close communication loop.       | Quote/SLA/slot details.              |
+| S25  | Workflow API → Renderer       | **201 Created** (or similar).                         | Final success path.             | IDs, SLA, schedule, quote.           |
+
+---
 
 ## 2) Quote → Bind (referral on risk)
 
@@ -454,6 +522,31 @@ sequenceDiagram
     WF-->>R: 201 Policy issued
   end
 ```
+---
+
+# 3) Quote → Bind (referral on risk) (Q1–Q15)
+
+| Step | From → To                          | What happens                                         | Why (purpose)                   | Key data / artifacts       |
+| ---- | ---------------------------------- | ---------------------------------------------------- | ------------------------------- | -------------------------- |
+| Q1   | Prospect/Agent → AI Agent          | “Start Quote.”                                       | Launch guided quote flow.       | Session, product.          |
+| Q2   | AI Agent → Workflow Store          | Get `uiModel` + quote workflow.                      | Render correct quote form.      | JSON defs (version).       |
+| Q3   | Store → AI Agent                   | Return definitions.                                  | Provide render/rules.           | Version N.                 |
+| Q4   | AI Agent → UI Renderer             | Render quote UI (coverage choices, drivers, assets). | Collect risk & coverage prefs.  | Components, validations.   |
+| Q5   | Prospect/Agent → UI Renderer       | Enter risk data & selections.                        | Gather rating inputs.           | Drivers, vehicles, limits. |
+| Q6   | UI Renderer → API Gateway          | `POST /quotes`.                                      | Create a quote.                 | JWT, payload.              |
+| Q7   | Gateway → Workflow API             | Forward to engine.                                   | Execute rules.                  | Payload + auth ctx.        |
+| Q8   | Workflow API → Store               | **Pin** workflow version.                            | Auditability.                   | `quotes.auto.default@vN`.  |
+| Q9   | Workflow API → Underwriting/Rating | Request risk score + price.                          | Decide premium & referral need. | Risk score, base rate.     |
+| Q10  | UW/Rating → Workflow API           | Return risk & premium.                               | Continue flow.                  | e.g., Moderate / \$1,230.  |
+| Q11a | Workflow API → DB                  | Create **UW referral** task (if rule hit).           | Human review for risk.          | Referral record.           |
+| Q12a | Workflow API → UI                  | **202 Pending UW review**.                           | Set expectations.               | Referral id/status.        |
+| Q11b | UI Renderer → API Gateway          | `POST /quotes/{id}/bind` (no referral path).         | Proceed to bind.                | Payment token, acceptance. |
+| Q12b | Gateway → Workflow API             | Execute bind.                                        | Issue policy.                   | Quote id, payment info.    |
+| Q13b | Workflow API → Billing             | Tokenize/charge payment.                             | Collect premium.                | Charge request.            |
+| Q14b | Billing → Workflow API             | Payment OK.                                          | Confirm funds.                  | TxnRef/status.             |
+| Q15b | Workflow API → DB/UI               | Create policy; return **201 Policy issued**.         | Complete sale.                  | Policy id, docs link.      |
+
+*(a = referral branch, b = straight-through bind branch)*
 
 ---
 
