@@ -532,6 +532,128 @@ By following these steps, you'll have a serverless API in Azure that uses Servic
 |[68AA07F5193441878BFCD5CB372B25FB.json](https://www.xenhey.com/api/store/68AA07F5193441878BFCD5CB372B25FB)| **Create a new Record in NoSQL Database** |
 |[21B8411B3EA24285B52F24B1D968B68A.json](https://www.xenhey.com/api/store/21B8411B3EA24285B52F24B1D968B68A)| **AI Search using Chat GPT Natual Language Processor** |
 
+Below are concise, production-ready tables for **every endpoint** we outlined.
+*Notes:* All mutating endpoints support `X-Idempotency-Key`. Auth is `Bearer <JWT>`. Roles are suggestions—tune to your RBAC.
+
+---
+
+# Workflows & UI
+
+| Method & Path                               | Purpose                                                                                     | Body | Params / Path                               | Success | Typical Roles         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- | ---- | ------------------------------------------- | ------- | --------------------- |
+| **GET** `/workflows/{workflowId}/active`    | Resolve the **active workflow version** (supports canary) and return `uiModel` if included. | No   | `tenantId`, `product`, `requestHash` (0–99) | 200     | WorkflowAdmin, Engine |
+| **POST** `/workflows/{workflowId}/versions` | Register a **workflow version** (metadata pointing to immutable JSON in storage).           | Yes  | `{workflowId}`                              | 201     | WorkflowAdmin         |
+| **POST** `/workflows/{workflowId}/activate` | Activate a version with optional **rolloutPercent** (canary).                               | Yes  | `{workflowId}`                              | 204/200 | WorkflowAdmin         |
+| **POST** `/workflows/{workflowId}/retire`   | Retire a previously activated version.                                                      | Yes  | `{workflowId}`                              | 204/200 | WorkflowAdmin         |
+
+---
+
+# Claims (FNOL → Settlement)
+
+| Method & Path                           | Purpose                                                   | Body | Params / Path | Success               | Typical Roles               |
+| --------------------------------------- | --------------------------------------------------------- | ---- | ------------- | --------------------- | --------------------------- |
+| **POST** `/claims`                      | Create a **claim (FNOL)**; pins `workflowId@version`.     | Yes  | —             | 201 (or 202 if gated) | Customer, Agent, Engine     |
+| **GET** `/claims/{claimId}`             | Get claim detail (status, SLA, amounts, pinned workflow). | No   | `{claimId}`   | 200                   | Customer\*, Agent, Adjuster |
+| **PATCH** `/claims/{claimId}`           | Update claim facts (minor corrections/notes).             | Yes  | `{claimId}`   | 200                   | Adjuster, Supervisor        |
+| **POST** `/claims/{claimId}/accept`     | Customer **accepts settlement** (STP/instant pay flows).  | Yes  | `{claimId}`   | 200                   | Customer                    |
+| **POST** `/claims/{claimId}/siu-hold`   | Apply **fraud/SIU hold** with reason & until.             | Yes  | `{claimId}`   | 200                   | SIU, Supervisor             |
+| **POST** `/claims/{claimId}/siu-clear`  | Clear SIU hold; set disposition/notes.                    | Yes  | `{claimId}`   | 200                   | SIU                         |
+| **POST** `/claims/{claimId}/status`     | Manually set claim status (engine/admin ops).             | Yes  | `{claimId}`   | 200                   | Engine, Supervisor          |
+| **PATCH** `/claims/{claimId}/trace-uri` | Attach/replace pointer to **decision trace** (blob).      | Yes  | `{claimId}`   | 200                   | Engine                      |
+
+\*Customer access is restricted to own claims.
+
+---
+
+# Approvals (Workflow Gates)
+
+| Method & Path                             | Purpose                                            | Body | Params / Path  | Success | Typical Roles                  |
+| ----------------------------------------- | -------------------------------------------------- | ---- | -------------- | ------- | ------------------------------ |
+| **POST** `/approvals`                     | Create a **pending approval** task for any entity. | Yes  | —              | 201     | Engine, Supervisor             |
+| **POST** `/approvals/{approvalId}/decide` | **Approve/Reject** a pending approval with reason. | Yes  | `{approvalId}` | 200     | Supervisor, Underwriter, Legal |
+
+---
+
+# Payments
+
+| Method & Path                            | Purpose                                                | Body | Params / Path | Success | Typical Roles       |
+| ---------------------------------------- | ------------------------------------------------------ | ---- | ------------- | ------- | ------------------- |
+| **POST** `/claims/{claimId}/payments`    | Create a **payment** against a claim.                  | Yes  | `{claimId}`   | 201     | Engine, PaymentsOps |
+| **POST** `/payments/{paymentId}/confirm` | PSP/ops callback to **confirm** (Succeeded/Failed/… ). | Yes  | `{paymentId}` | 200     | PaymentsOps, PSP    |
+
+---
+
+# Documents
+
+| Method & Path                 | Purpose                                           | Body | Params / Path | Success | Typical Roles             |
+| ----------------------------- | ------------------------------------------------- | ---- | ------------- | ------- | ------------------------- |
+| **POST** `/documents`         | Register a **document** (pre-uploaded to blob).   | Yes  | —             | 201     | Customer, Agent, Adjuster |
+| **POST** `/documents:presign` | Get **pre-signed upload URL** for direct-to-blob. | Yes  | —             | 200     | Customer, Agent, Adjuster |
+
+---
+
+# Quotes & Policies
+
+| Method & Path                           | Purpose                                          | Body | Params / Path | Success | Typical Roles     |
+| --------------------------------------- | ------------------------------------------------ | ---- | ------------- | ------- | ----------------- |
+| **POST** `/quotes`                      | Create a **quote**; may return 202 if referred.  | Yes  | —             | 201/202 | Agent, Engine     |
+| **GET** `/quotes/{quoteId}`             | Retrieve quote detail (premium, referral state). | No   | `{quoteId}`   | 200     | Agent             |
+| **POST** `/quotes/{quoteId}/bind`       | **Bind** quote → issue policy (after payment).   | Yes  | `{quoteId}`   | 201     | Agent             |
+| **POST** `/policies`                    | Create policy (direct or after bind).            | Yes  | —             | 201     | Agent, Engine     |
+| **GET** `/policies/{policyId}`          | Get policy detail (coverages, dates, status).    | No   | `{policyId}`  | 200     | Customer\*, Agent |
+| **POST** `/policies/{policyId}/endorse` | Submit an **endorsement** (mid-term change).     | Yes  | `{policyId}`  | 202/201 | Agent             |
+
+\*Customer access limited to their policies.
+
+---
+
+# Traces & Audit
+
+| Method & Path                     | Purpose                                        | Body | Params / Path | Success | Typical Roles       |
+| --------------------------------- | ---------------------------------------------- | ---- | ------------- | ------- | ------------------- |
+| **GET** `/claims/{claimId}/trace` | Retrieve **decision trace** (JSON/JSONL).      | No   | `{claimId}`   | 200     | Auditor, Compliance |
+| **POST** `/audit/search`          | Search **audit events** with filters & paging. | Yes  | —             | 200     | Auditor, Compliance |
+
+---
+
+# Scheduling (Vendors/Repair)
+
+| Method & Path                | Purpose                                      | Body | Params / Path | Success | Typical Roles    |
+| ---------------------------- | -------------------------------------------- | ---- | ------------- | ------- | ---------------- |
+| **POST** `/schedule/suggest` | Suggest **slots** by team/skills/SLA window. | Yes  | —             | 200     | Engine, Adjuster |
+| **POST** `/schedule/book`    | **Book** a suggested slot for a request.     | Yes  | —             | 201     | Engine, Adjuster |
+
+---
+
+# Catalog / Lookups
+
+| Method & Path                 | Purpose                                         | Body | Params / Path         | Success | Typical Roles |
+| ----------------------------- | ----------------------------------------------- | ---- | --------------------- | ------- | ------------- |
+| **GET** `/catalog/loss-types` | List allowed **loss types** for product/tenant. | No   | `tenantId`, `product` | 200     | UI, Engine    |
+| **GET** `/catalog/coverages`  | List **coverage options** for product/tenant.   | No   | `tenantId`, `product` | 200     | UI, Engine    |
+
+---
+
+# Admin / Tenants / Customers
+
+| Method & Path         | Purpose                             | Body | Params / Path | Success | Typical Roles |
+| --------------------- | ----------------------------------- | ---- | ------------- | ------- | ------------- |
+| **POST** `/tenants`   | Create a **tenant** (org onboard).  | Yes  | —             | 201     | PlatformAdmin |
+| **POST** `/customers` | Create a **customer/policyholder**. | Yes  | —             | 201     | Agent, Ops    |
+
+---
+
+## Response code cheat sheet
+
+* **200 OK** – Success (fetch/confirm/update).
+* **201 Created** – New resource created (claim, payment, doc, policy, booking).
+* **202 Accepted** – Workflow gate/referral pending (claim, quote).
+* **204 No Content** – Activation/retire success without body.
+* **400/422** – Validation errors (schema/required fields).
+* **401/403** – Auth/authorization failure.
+* **404** – Not found or not in caller’s scope.
+
+If you want, I can merge these descriptions directly into the **Postman collection** as request descriptions and add sample **tests** for status codes and JSON schema validation.
 
 > Create the following blob containers and share in azure storage
 
