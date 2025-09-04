@@ -153,9 +153,6 @@ A **rules-defined, agent-rendered** platform: business rules and UI models live 
 ---
 
 
-awesome — here’s a crisp, detailed expansion of the **personas** your platform serves. Each persona ties directly to the JSON-rules engine, AI-generated UI, and REST API surface you’ve designed.
-
----
 
 # Personas (Detailed)
 
@@ -300,9 +297,6 @@ sequenceDiagram
   WF-->>Cust: status update / settlement
   Agent-->>WF: (optional) assists, attaches docs
 ```
-Absolutely—here are clear, step-by-step tables explaining **each** of the sequence diagrams we discussed.
-
-
 ---
 
 # 2) FNOL Straight-Through (low-severity glass) (F1–F16)
@@ -334,9 +328,6 @@ Absolutely—here are clear, step-by-step tables explaining **each** of the sequ
 
 ---
 
-If you want, I can drop these tables into your **Postman request descriptions** (so each step explanation is right next to the corresponding calls), or export them into a printable PDF cheat-sheet.
-
----
 
 # Data & Permissions (at a glance)
 
@@ -346,7 +337,6 @@ If you want, I can drop these tables into your **Postman request descriptions** 
 
 ---
 
-If you want next, I can generate **persona-specific UI snippets** from a `uiModel` (e.g., Underwriter referral panel), or **role-based API Postman collections** mapped to these actions.
 
 ## Outcomes & KPIs
 
@@ -746,7 +736,6 @@ Below are concise, production-ready tables for **every endpoint** we outlined.
 * **401/403** – Auth/authorization failure.
 * **404** – Not found or not in caller’s scope.
 
-If you want, I can merge these descriptions directly into the **Postman collection** as request descriptions and add sample **tests** for status codes and JSON schema validation.
 
 > Create the following blob containers and share in azure storage
 
@@ -989,9 +978,6 @@ customEvents
 
 ---
 
-Awesome — here’s a build-ready **Azure SQL** schema and a focused set of **stored procedures** for the insurance data model we discussed (claims, policies, approvals, payments, workflow activations, audit/trace). It’s opinionated for reliability, auditability, and JSON-driven workflows.
-
----
 
 # 1) Schema & Tables (T-SQL)
 
@@ -1654,7 +1640,6 @@ EXEC ins.usp_Claim_SetStatus @ClaimId, 'Settled', 'api@system', 'Auto glass sett
 
 ---
 
-Awesome—here’s a **build-ready catalog** of REST endpoints for the insurance platform, grouped by domain, with **sample request payloads** (and concise notes). Use a common base like `https://api.example.com/v1`.
 
 # Conventions (applies to all)
 
@@ -2098,4 +2083,3 @@ X-Correlation-Id: <uuid>         # for tracing across services
 * **Version pinning:** on create endpoints (`/claims`, `/quotes`, `/policies/{id}/endorse`) include `workflowId`; the engine pins the active version and writes it into the entity.
 * **RBAC:** enforce roles (`Customer`, `Agent`, `Adjuster`, `Underwriter`, `Supervisor`, `SIU`, `WorkflowAdmin`, `Auditor`) at the gateway.
 
-If you want, I can bundle these into an **OpenAPI 3.0 YAML** (with schemas) or a **Postman collection** so you can hit the ground running.
