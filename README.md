@@ -2083,3 +2083,60 @@ X-Correlation-Id: <uuid>         # for tracing across services
 * **Version pinning:** on create endpoints (`/claims`, `/quotes`, `/policies/{id}/endorse`) include `workflowId`; the engine pins the active version and writes it into the entity.
 * **RBAC:** enforce roles (`Customer`, `Agent`, `Adjuster`, `Underwriter`, `Supervisor`, `SIU`, `WorkflowAdmin`, `Auditor`) at the gateway.
 
+---
+
+Here’s a handy glossary of the acronyms we used across the solution—what they mean, where they fit, and why they matter.
+
+| Acronym  | Stands for                               | In this solution                       | Why it matters                                       |
+| -------- | ---------------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| ACH      | Automated Clearing House                 | Claim payouts to bank accounts         | Low-cost electronic payments for settlements         |
+| ADLS     | Azure Data Lake Storage                  | Stores decision traces, docs           | Durable, scalable object storage for audit/artifacts |
+| AI       | Artificial Intelligence                  | UI agent, guidance, summaries          | Speeds intake, reduces errors, improves CX           |
+| API      | Application Programming Interface        | All service endpoints                  | Standard way systems talk to each other              |
+| APIM     | Azure API Management                     | Gateway in front of services           | Auth, rate limits, policies, observability           |
+| B2C      | (Entra) Azure AD B2C / External ID       | Customer identity                      | Secure login for policyholders/agents                |
+| BPMN     | Business Process Model & Notation        | Alternative process modeling (Camunda) | Visual, standard process diagrams                    |
+| CAT      | Catastrophe (event)                      | Surge scenarios (storms, wildfires)    | Drives scale/spike handling requirements             |
+| CDC      | Change Data Capture                      | Data pipeline option                   | Feeds analytics/lakes with incremental changes       |
+| CLUE     | Comprehensive Loss Underwriting Exchange | External data for underwriting         | Prior loss history to assess risk                    |
+| CMK      | Customer-Managed Key                     | Encryption key model                   | Customer controls data-at-rest keys                  |
+| CRUD     | Create, Read, Update, Delete             | Resource operations                    | Core API patterns for every entity                   |
+| DB       | Database                                 | Azure SQL for core records             | System of record for claims/policies                 |
+| DI       | Document Intelligence                    | Extracts data from uploads             | Automates reading invoices/reports/photos            |
+| DLP      | Data Loss Prevention                     | Security control                       | Prevents sensitive data exfiltration                 |
+| DMN      | Decision Model & Notation                | Business decision tables               | Business-editable rules (pricing/triage)             |
+| EXIF     | Exchangeable Image File Format           | Photo metadata checks                  | Fraud signals (timestamp/GPS mismatch)               |
+| FNOL     | First Notice of Loss                     | Claim initiation flow                  | Starts the claims process                            |
+| HTTP     | HyperText Transfer Protocol              | Transport for APIs                     | Ubiquitous web protocol for REST                     |
+| ID       | Identifier                               | Entity primary keys                    | Referential integrity across systems                 |
+| JSON     | JavaScript Object Notation               | Workflows, uiModel, payloads           | Human-readable, schema-validated config/data         |
+| JSONL    | JSON Lines                               | Decision trace format                  | Append-only, easy to stream/analyze                  |
+| JWT      | JSON Web Token                           | Auth token                             | Carries identity/roles to APIs                       |
+| KPI      | Key Performance Indicator                | STP%, cycle time, SLA breaches         | Measures value/operational health                    |
+| LOB      | Line of Business                         | Auto, Home, Commercial                 | Scopes rules/UI by product                           |
+| ML       | Machine Learning                         | Fraud/triage/risk scoring              | Improves routing and leakage control                 |
+| MVR      | Motor Vehicle Record                     | UW data source                         | Driver history for pricing/referrals                 |
+| MTTR     | Mean Time To Recovery                    | Rollback speed for rules               | Safer, faster rule/config changes                    |
+| NIGO     | Not In Good Order                        | Intake quality issue                   | Drives rework—fixed by adaptive UI/validation        |
+| NPS      | Net Promoter Score                       | CX metric                              | Tracks customer satisfaction                         |
+| OSINT    | Open-Source Intelligence                 | Fraud investigations                   | External signals for SIU reviews                     |
+| PII      | Personally Identifiable Information      | Customer data                          | Must be masked/secured in traces and logs            |
+| PoC      | Proof of Concept                         | Early prototypes                       | Validate approach before scaling                     |
+| PSP      | Payment Service Provider                 | Confirms payments                      | Settlement confirmation callbacks                    |
+| RBAC     | Role-Based Access Control                | AuthZ across personas                  | Ensures least-privilege access                       |
+| REST     | Representational State Transfer          | API style used                         | Simple, resource-oriented, cacheable                 |
+| RLS      | Row-Level Security                       | SQL tenant scoping                     | Enforces multi-tenant isolation in DB                |
+| SLA      | Service Level Agreement                  | Timers/targets on steps                | Visibility & commitments for ops and CX              |
+| SLO      | Service Level Objective                  | Platform reliability goals             | Targets for availability/latency                     |
+| SRE      | Site Reliability Engineering             | Ops practice                           | Keeps the platform reliable at scale                 |
+| SQL      | Structured Query Language                | Core relational store                  | Strong consistency & reporting                       |
+| STP      | Straight-Through Processing              | No-touch claims/quotes                 | Cuts cost/time; boosts CX                            |
+| UI       | User Interface                           | Forms auto-generated from uiModel      | Faster iterations; fewer errors                      |
+| URL      | Uniform Resource Locator                 | Document/trace pointers                | Locates blobs and API resources                      |
+| UUID     | Universally Unique Identifier            | IDs in APIs/DB                         | Collision-resistant identifiers                      |
+| UW       | Underwriting / Underwriter               | Referral decisions                     | Human gate for risk/edge cases                       |
+| WDL      | Workflow Definition Language             | Logic Apps’ JSON workflows             | JSON-native orchestration on Azure                   |
+| Entra ID | Microsoft Entra ID (Azure AD)            | Identity provider                      | Central auth for staff and services                  |
+
+If you want, I can drop this table into your Postman collection README or convert it into a one-pager you can hand to stakeholders.
+
