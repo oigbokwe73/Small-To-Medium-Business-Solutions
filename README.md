@@ -686,7 +686,7 @@ Below are concise, production-ready tables for **every endpoint** we outlined.
 | **GET** `/policies/{policyId}`          | Get policy detail (coverages, dates, status).    | No   | `{policyId}`  | 200     | Customer\*, Agent |
 | **POST** `/policies/{policyId}/endorse` | Submit an **endorsement** (mid-term change).     | Yes  | `{policyId}`  | 202/201 | Agent             |
 
-\*Customer access limited to their policies.
+*Customer access limited to their policies.
 
 ---
 
@@ -725,6 +725,179 @@ Below are concise, production-ready tables for **every endpoint** we outlined.
 | **POST** `/customers` | Create a **customer/policyholder**. | Yes  | —             | 201     | Agent, Ops    |
 
 ---
+Below is a concise CRUD matrix for each resource in the insurance platform. Paths use `{id}` placeholders; send `Authorization: Bearer <JWT>` and `Content-Type: application/json`. Prefer soft-delete via `status`/`archived=true` where noted.
+
+# Workflows (definitions)
+
+| Op          | Method | Path                                                          | Description                                                 | Notes                                       |
+| ----------- | ------ | ------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
+| Create      | POST   | `/workflows/{workflowId}/versions`                            | Register a workflow **version** (points to immutable JSON). | Body: tenant, product, version, storageUrl. |
+| Read (list) | GET    | `/workflows/{workflowId}/versions?tenantId&product`           | List versions for a workflow.                               | Pagination optional.                        |
+| Read (one)  | GET    | `/workflows/{workflowId}/versions/{version}?tenantId&product` | Get a specific version’s metadata.                          |                                             |
+| Update      | PATCH  | `/workflows/{workflowId}/versions/{version}`                  | Update metadata (notes/sha).                                | Definition JSON stays immutable.            |
+| Delete\*    | DELETE | `/workflows/{workflowId}/versions/{version}`                  | Retire/remove metadata record.                              | Prefer “retire” action below.               |
+
+**Actions (non-CRUD):**
+
+* **Resolve active**: `GET /workflows/{workflowId}/active?tenantId&product&requestHash`
+* **Activate**: `POST /workflows/{workflowId}/activate`
+* **Retire**: `POST /workflows/{workflowId}/retire`
+
+# Workflow activations (canary map)
+
+| Op          | Method | Path                                                | Description                                 | Notes                      |
+| ----------- | ------ | --------------------------------------------------- | ------------------------------------------- | -------------------------- |
+| Create      | POST   | `/workflow-activations`                             | Add an active mapping (version + rollout%). |                            |
+| Read (list) | GET    | `/workflow-activations?tenantId&product&workflowId` | List activations.                           |                            |
+| Read (one)  | GET    | `/workflow-activations/{activationId}`              | Get activation details.                     |                            |
+| Update      | PATCH  | `/workflow-activations/{activationId}`              | Change rollout%, status.                    |                            |
+| Delete      | DELETE | `/workflow-activations/{activationId}`              | Remove/retire activation.                   | Prefer `status='Retired'`. |
+
+# Claims
+
+| Op          | Method | Path                              | Description                                 | Notes                   |
+| ----------- | ------ | --------------------------------- | ------------------------------------------- | ----------------------- |
+| Create      | POST   | `/claims`                         | Create claim (FNOL); pins workflow version. | 201 or 202 if gated.    |
+| Read (list) | GET    | `/claims?tenantId&status&product` | Search/list claims.                         |                         |
+| Read (one)  | GET    | `/claims/{claimId}`               | Get claim details.                          |                         |
+| Update      | PATCH  | `/claims/{claimId}`               | Update facts/notes.                         | Field-level validation. |
+| Delete\*    | DELETE | `/claims/{claimId}`               | Close/archive a claim.                      | Prefer status change.   |
+
+**Actions:**
+
+* Accept settlement: `POST /claims/{claimId}/accept`
+* Set status: `POST /claims/{claimId}/status`
+* SIU hold/clear: `POST /claims/{claimId}/siu-hold` / `POST /claims/{claimId}/siu-clear`
+* Trace URI: `PATCH /claims/{claimId}/trace-uri`
+* Get trace (read-only): `GET /claims/{claimId}/trace`
+
+# Approvals
+
+| Op          | Method | Path                                    | Description                          | Notes           |
+| ----------- | ------ | --------------------------------------- | ------------------------------------ | --------------- |
+| Create      | POST   | `/approvals`                            | Create pending approval gate.        |                 |
+| Read (list) | GET    | `/approvals?entityType&entityId&status` | List approvals.                      |                 |
+| Read (one)  | GET    | `/approvals/{approvalId}`               | Get approval detail.                 |                 |
+| Update      | PATCH  | `/approvals/{approvalId}`               | Modify approver/expiry (if pending). |                 |
+| Delete      | DELETE | `/approvals/{approvalId}`               | Cancel pending approval.             | Audit required. |
+
+**Action:** Decide: `POST /approvals/{approvalId}/decide` (approve/reject)
+
+# Payments
+
+| Op          | Method | Path                         | Description                     | Notes                |
+| ----------- | ------ | ---------------------------- | ------------------------------- | -------------------- |
+| Create      | POST   | `/claims/{claimId}/payments` | Create payment against a claim. |                      |
+| Read (list) | GET    | `/claims/{claimId}/payments` | List claim payments.            |                      |
+| Read (one)  | GET    | `/payments/{paymentId}`      | Get payment detail.             |                      |
+| Update      | PATCH  | `/payments/{paymentId}`      | Amend memo/status (ops).        | Limited fields.      |
+| Delete      | DELETE | `/payments/{paymentId}`      | Void/reverse (logical).         | Use reversal record. |
+
+**Action:** PSP confirm: `POST /payments/{paymentId}/confirm`
+
+# Documents
+
+| Op          | Method | Path                             | Description                      | Notes                    |
+| ----------- | ------ | -------------------------------- | -------------------------------- | ------------------------ |
+| Create      | POST   | `/documents`                     | Register a blob-backed document. |                          |
+| Read (list) | GET    | `/documents?entityType&entityId` | List docs for an entity.         |                          |
+| Read (one)  | GET    | `/documents/{documentId}`        | Get document metadata.           |                          |
+| Update      | PATCH  | `/documents/{documentId}`        | Update docType/labels.           |                          |
+| Delete      | DELETE | `/documents/{documentId}`        | Remove metadata (and blob opt).  | Soft-delete recommended. |
+
+**Action:** Presign upload: `POST /documents:presign`
+
+# Quotes
+
+| Op          | Method | Path                              | Description                 | Notes         |
+| ----------- | ------ | --------------------------------- | --------------------------- | ------------- |
+| Create      | POST   | `/quotes`                         | Create quote (may refer).   | 201/202.      |
+| Read (list) | GET    | `/quotes?tenantId&status&product` | Search quotes.              |               |
+| Read (one)  | GET    | `/quotes/{quoteId}`               | Get quote detail.           |               |
+| Update      | PATCH  | `/quotes/{quoteId}`               | Update selections/metadata. | If not bound. |
+| Delete      | DELETE | `/quotes/{quoteId}`               | Cancel a quote.             |               |
+
+**Action:** Bind: `POST /quotes/{quoteId}/bind`
+
+# Policies
+
+| Op          | Method | Path                                   | Description                          | Notes                     |
+| ----------- | ------ | -------------------------------------- | ------------------------------------ | ------------------------- |
+| Create      | POST   | `/policies`                            | Create policy (direct or post-bind). |                           |
+| Read (list) | GET    | `/policies?tenantId&customerId&status` | Search policies.                     |                           |
+| Read (one)  | GET    | `/policies/{policyId}`                 | Get policy detail.                   |                           |
+| Update      | PATCH  | `/policies/{policyId}`                 | Update admin fields (status, notes). | No coverage risk changes. |
+| Delete      | DELETE | `/policies/{policyId}`                 | Cancel/archive policy.               | Prefer cancel txn.        |
+
+**Action:** Endorse: `POST /policies/{policyId}/endorse`
+
+# Scheduling (bookings)
+
+| Op          | Method | Path                             | Description                | Notes |
+| ----------- | ------ | -------------------------------- | -------------------------- | ----- |
+| Create      | POST   | `/schedule/book`                 | Book a resource/slot.      |       |
+| Read (list) | GET    | `/schedule/bookings?requestId`   | List bookings for request. |       |
+| Read (one)  | GET    | `/schedule/bookings/{bookingId}` | Get booking.               |       |
+| Update      | PATCH  | `/schedule/bookings/{bookingId}` | Reschedule/cancel.         |       |
+| Delete      | DELETE | `/schedule/bookings/{bookingId}` | Cancel booking.            |       |
+
+**Action:** Suggest slots: `POST /schedule/suggest`
+
+# Audit events
+
+| Op          | Method | Path                      | Description                 | Notes                          |
+| ----------- | ------ | ------------------------- | --------------------------- | ------------------------------ |
+| Create      | POST   | `/audit/events`           | Write a custom audit event. | Usually server-side.           |
+| Read (list) | POST   | `/audit/search`           | Search audit by filters.    | Uses POST for complex filters. |
+| Read (one)  | GET    | `/audit/events/{auditId}` | Get one event.              |                                |
+| Update      | —      | —                         | Not typical.                |                                |
+| Delete      | —      | —                         | Not allowed.                | Retain by policy.              |
+
+# Traces (decision)
+
+| Op         | Method | Path                          | Description               | Notes                |
+| ---------- | ------ | ----------------------------- | ------------------------- | -------------------- |
+| Create     | POST   | `/traces`                     | Register a trace pointer. | Engine use.          |
+| Read (one) | GET    | `/claims/{claimId}/trace`     | Get claim decision trace. | Auditor role.        |
+| Update     | PATCH  | `/claims/{claimId}/trace-uri` | Update pointer.           |                      |
+| Delete     | —      | —                             | Not allowed.              | Immutable by design. |
+
+# Tenants
+
+| Op          | Method | Path                  | Description         | Notes        |
+| ----------- | ------ | --------------------- | ------------------- | ------------ |
+| Create      | POST   | `/tenants`            | Create tenant/org.  |              |
+| Read (list) | GET    | `/tenants`            | List tenants.       |              |
+| Read (one)  | GET    | `/tenants/{tenantId}` | Get tenant.         |              |
+| Update      | PATCH  | `/tenants/{tenantId}` | Update status/name. |              |
+| Delete      | DELETE | `/tenants/{tenantId}` | Deactivate tenant.  | Soft-delete. |
+
+# Customers
+
+| Op          | Method | Path                         | Description                   | Notes |
+| ----------- | ------ | ---------------------------- | ----------------------------- | ----- |
+| Create      | POST   | `/customers`                 | Create customer/policyholder. |       |
+| Read (list) | GET    | `/customers?tenantId&search` | Search customers.             |       |
+| Read (one)  | GET    | `/customers/{customerId}`    | Get customer.                 |       |
+| Update      | PATCH  | `/customers/{customerId}`    | Update contact fields.        |       |
+| Delete      | DELETE | `/customers/{customerId}`    | Archive customer.             |       |
+
+# Catalog (loss types/coverages)
+
+| Op          | Method | Path                                   | Description              | Notes               |
+| ----------- | ------ | -------------------------------------- | ------------------------ | ------------------- |
+| Create      | POST   | `/catalog/loss-types`                  | Add a loss type (admin). | Optional admin API. |
+| Read (list) | GET    | `/catalog/loss-types?tenantId&product` | List loss types.         | Public read.        |
+| Update      | PATCH  | `/catalog/loss-types/{id}`             | Rename/retire entry.     |                     |
+| Delete      | DELETE | `/catalog/loss-types/{id}`             | Remove/retire.           | Prefer retire flag. |
+| Create      | POST   | `/catalog/coverages`                   | Add coverage option.     |                     |
+| Read (list) | GET    | `/catalog/coverages?tenantId&product`  | List coverages.          |                     |
+| Update      | PATCH  | `/catalog/coverages/{id}`              | Update option.           |                     |
+| Delete      | DELETE | `/catalog/coverages/{id}`              | Retire option.           |                     |
+
+---
+
+If you’d like, I can merge these descriptions into your **Postman collection** (as request docs) or output an **OpenAPI 3.0** spec that reflects all CRUD + action endpoints.
 
 ## Response code cheat sheet
 
