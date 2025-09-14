@@ -623,13 +623,13 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Workflows (definitions)
 
-| Op          | Method | Path                                                          | Description                                                 | Notes                                       |
-| ----------- | ------ | ------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
-| Create      | POST   | `/workflows/{workflowId}/versions`                            | Register a workflow **version** (points to immutable JSON). | Body: tenant, product, version, storageUrl. |
-| Read (list) | GET    | `/workflows/{workflowId}/versions?tenantId&product`           | List versions for a workflow.                               | Pagination optional.                        |
-| Read (one)  | GET    | `/workflows/{workflowId}/versions/{version}?tenantId&product` | Get a specific version’s metadata.                          |                                             |
-| Update      | PATCH  | `/workflows/{workflowId}/versions/{version}`                  | Update metadata (notes/sha).                                | Definition JSON stays immutable.            |
-| Delete\*    | DELETE | `/workflows/{workflowId}/versions/{version}`                  | Retire/remove metadata record.                              | Prefer “retire” action below.               |
+| Op          | Method | Path                                                          | Description                                                 | Notes                                       | Notes
+| ----------- | ------ | ------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |------------------------------------------- 
+| Create      | POST   | `/workflows/{workflowId}/versions`                            | Register a workflow **version** (points to immutable JSON). | Body: tenant, product, version, storageUrl. |[112CA3EBD95844C480AF364E739C8CBA.json](https://www.xenhey.com/api/store/112CA3EBD95844C480AF364E739C8CBA) |
+| Read (list) | GET    | `/workflows/{workflowId}/versions?tenantId&product`           | List versions for a workflow.                               | Pagination optional.                        |[02F560066F924B008DC102094B71A820.json](https://www.xenhey.com/api/store/02F560066F924B008DC102094B71A820)|
+| Read (one)  | GET    | `/workflows/{workflowId}/versions/{version}?tenantId&product` | Get a specific version’s metadata.                          |                                             |[02F560066F924B008DC102094B71A820.json](https://www.xenhey.com/api/store/02F560066F924B008DC102094B71A820)|
+| Update      | PATCH  | `/workflows/{workflowId}/versions/{version}`                  | Update metadata (notes/sha).                                | Definition JSON stays immutable.            |[2A8DFFB8D5514E1F9EAFA33A81302427.json](https://www.xenhey.com/api/store/2A8DFFB8D5514E1F9EAFA33A81302427)|
+| Delete\*    | DELETE | `/workflows/{workflowId}/versions/{version}`                  | Retire/remove metadata record.                              | Prefer “retire” action below.               |[28CADF2B04534FDEB5EB5CDF046653ED.json](https://www.xenhey.com/api/store/28CADF2B04534FDEB5EB5CDF046653ED)|
 
 **Actions (non-CRUD):**
 
