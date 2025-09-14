@@ -623,11 +623,11 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Workflows (definitions)
 
-| Op          | Method | Path                                                          | Description                                                 | Notes                                       | Notes
+| Op          | Method | Path                                                          | Description                                                 | Notes                                       | Configuration Rules
 | ----------- | ------ | ------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |------------------------------------------- 
 | Create      | POST   | `/workflows/{workflowId}/versions`                            | Register a workflow **version** (points to immutable JSON). | Body: tenant, product, version, storageUrl. |[112CA3EBD95844C480AF364E739C8CBA.json](https://www.xenhey.com/api/store/112CA3EBD95844C480AF364E739C8CBA) |
 | Read (list) | GET    | `/workflows/{workflowId}/versions?tenantId&product`           | List versions for a workflow.                               | Pagination optional.                        |[02F560066F924B008DC102094B71A820.json](https://www.xenhey.com/api/store/02F560066F924B008DC102094B71A820)|
-| Read (one)  | GET    | `/workflows/{workflowId}/versions/{version}?tenantId&product` | Get a specific version’s metadata.                          |                                             |[02F560066F924B008DC102094B71A820.json](https://www.xenhey.com/api/store/02F560066F924B008DC102094B71A820)|
+| Read (one)  | GET    | `/workflows/{workflowId}/versions/{version}?tenantId&product` | Get a specific version’s metadata.                          |                                             |[83F5A0CF96DF42FE80758E6F9B829074.json](https://www.xenhey.com/api/store/83F5A0CF96DF42FE80758E6F9B829074)|
 | Update      | PATCH  | `/workflows/{workflowId}/versions/{version}`                  | Update metadata (notes/sha).                                | Definition JSON stays immutable.            |[2A8DFFB8D5514E1F9EAFA33A81302427.json](https://www.xenhey.com/api/store/2A8DFFB8D5514E1F9EAFA33A81302427)|
 | Delete\*    | DELETE | `/workflows/{workflowId}/versions/{version}`                  | Retire/remove metadata record.                              | Prefer “retire” action below.               |[28CADF2B04534FDEB5EB5CDF046653ED.json](https://www.xenhey.com/api/store/28CADF2B04534FDEB5EB5CDF046653ED)|
 
@@ -649,13 +649,13 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Claims
 
-| Op          | Method | Path                              | Description                                 | Notes                   |
-| ----------- | ------ | --------------------------------- | ------------------------------------------- | ----------------------- |
-| Create      | POST   | `/claims`                         | Create claim (FNOL); pins workflow version. | 201 or 202 if gated.    |
-| Read (list) | GET    | `/claims?tenantId&status&product` | Search/list claims.                         |                         |
-| Read (one)  | GET    | `/claims/{claimId}`               | Get claim details.                          |                         |
-| Update      | PATCH  | `/claims/{claimId}`               | Update facts/notes.                         | Field-level validation. |
-| Delete\*    | DELETE | `/claims/{claimId}`               | Close/archive a claim.                      | Prefer status change.   |
+| Op          | Method | Path                              | Description                                 | Notes                   | Configuration Rules
+| ----------- | ------ | --------------------------------- | ------------------------------------------- | ----------------------- |----------------------- 
+| Create      | POST   | `/claims`                         | Create claim (FNOL); pins workflow version. | 201 or 202 if gated.    |[28CADF2B04534FDEB5EB5CDF046653ED.json](https://www.xenhey.com/api/store/28CADF2B04534FDEB5EB5CDF046653ED) |
+| Read (list) | GET    | `/claims?tenantId&status&product` | Search/list claims.                         |                         |[E8A5BE338ADB4C6EBDD00947D07B2D89.json](https://www.xenhey.com/api/store/E8A5BE338ADB4C6EBDD00947D07B2D89) |
+| Read (one)  | GET    | `/claims/{claimId}`               | Get claim details.                          |                         |[3DAD00F950D24DCCB367CB2F177E4F91.json](https://www.xenhey.com/api/store/3DAD00F950D24DCCB367CB2F177E4F91) |
+| Update      | PATCH  | `/claims/{claimId}`               | Update facts/notes.                         | Field-level validation. |[426FC2FD3AB141C8A846961EE327FD51.json](https://www.xenhey.com/api/store/426FC2FD3AB141C8A846961EE327FD51) |
+| Delete\*    | DELETE | `/claims/{claimId}`               | Close/archive a claim.                      | Prefer status change.   |[C759529DF45244B89A5502B495ED995B.json](https://www.xenhey.com/api/store/C759529DF45244B89A5502B495ED995B) |
 
 **Actions:**
 
@@ -667,13 +667,13 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Approvals
 
-| Op          | Method | Path                                    | Description                          | Notes           |
-| ----------- | ------ | --------------------------------------- | ------------------------------------ | --------------- |
-| Create      | POST   | `/approvals`                            | Create pending approval gate.        |                 |
-| Read (list) | GET    | `/approvals?entityType&entityId&status` | List approvals.                      |                 |
-| Read (one)  | GET    | `/approvals/{approvalId}`               | Get approval detail.                 |                 |
-| Update      | PATCH  | `/approvals/{approvalId}`               | Modify approver/expiry (if pending). |                 |
-| Delete      | DELETE | `/approvals/{approvalId}`               | Cancel pending approval.             | Audit required. |
+| Op          | Method | Path                                    | Description                          | Notes           | Configuration Rules
+| ----------- | ------ | --------------------------------------- | ------------------------------------ | --------------- |-----------------------
+| Create      | POST   | `/approvals`                            | Create pending approval gate.        |                 |[43923315B7DB4FEEA046779931DE8359.json](https://www.xenhey.com/api/store/43923315B7DB4FEEA046779931DE8359) |
+| Read (list) | GET    | `/approvals?entityType&entityId&status` | List approvals.                      |                 |[956E567D4DE6454B84DB4EC9B9FBD291.json](https://www.xenhey.com/api/store/956E567D4DE6454B84DB4EC9B9FBD291) |
+| Read (one)  | GET    | `/approvals/{approvalId}`               | Get approval detail.                 |                 |[1701BF8ECC234B5EB0FC68D08B011C9A.json](https://www.xenhey.com/api/store/1701BF8ECC234B5EB0FC68D08B011C9A) |
+| Update      | PATCH  | `/approvals/{approvalId}`               | Modify approver/expiry (if pending). |                 |[36847EABA6EA45D9A3F7B2CEABC75720.json](https://www.xenhey.com/api/store/36847EABA6EA45D9A3F7B2CEABC75720) |
+| Delete      | DELETE | `/approvals/{approvalId}`               | Cancel pending approval.             | Audit required. |[EBDA3ADA414444039C7E7B602863170F.json](https://www.xenhey.com/api/store/EBDA3ADA414444039C7E7B602863170F) |
 
 **Action:** Decide: `POST /approvals/{approvalId}/decide` (approve/reject)
 
