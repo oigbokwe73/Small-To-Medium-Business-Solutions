@@ -679,13 +679,13 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Payments
 
-| Op          | Method | Path                         | Description                     | Notes                |
-| ----------- | ------ | ---------------------------- | ------------------------------- | -------------------- |
-| Create      | POST   | `/claims/{claimId}/payments` | Create payment against a claim. |                      |
-| Read (list) | GET    | `/claims/{claimId}/payments` | List claim payments.            |                      |
-| Read (one)  | GET    | `/payments/{paymentId}`      | Get payment detail.             |                      |
-| Update      | PATCH  | `/payments/{paymentId}`      | Amend memo/status (ops).        | Limited fields.      |
-| Delete      | DELETE | `/payments/{paymentId}`      | Void/reverse (logical).         | Use reversal record. |
+| Op          | Method | Path                         | Description                     | Notes                | Configuration Rules
+| ----------- | ------ | ---------------------------- | ------------------------------- | -------------------- |-----------------------
+| Create      | POST   | `/claims/{claimId}/payments` | Create payment against a claim. |                      |[42B96ED99E9E45D784728198A6279E67.json](https://www.xenhey.com/api/store/42B96ED99E9E45D784728198A6279E67) |
+| Read (list) | GET    | `/claims/{claimId}/payments` | List claim payments.            |                      |[4FD6F3627B62447487317D3872425E45.json](https://www.xenhey.com/api/store/4FD6F3627B62447487317D3872425E45) |
+| Read (one)  | GET    | `/payments/{paymentId}`      | Get payment detail.             |                      |[31218B75B18444729D5728F01742757F.json](https://www.xenhey.com/api/store/31218B75B18444729D5728F01742757F) |
+| Update      | PATCH  | `/payments/{paymentId}`      | Amend memo/status (ops).        | Limited fields.      |[FD6F54E0576240DEA4ADD4AA7DD406A8.json](https://www.xenhey.com/api/store/FD6F54E0576240DEA4ADD4AA7DD406A8) |
+| Delete      | DELETE | `/payments/{paymentId}`      | Void/reverse (logical).         | Use reversal record. |[8F7E18DAB296433FAF300280A66E7EE5.json](https://www.xenhey.com/api/store/8F7E18DAB296433FAF300280A66E7EE5) |
 
 **Action:** PSP confirm: `POST /payments/{paymentId}/confirm`
 
