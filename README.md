@@ -747,103 +747,103 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Documents
 
-| Op          | Method | Path                             | Description                      |  Congiguration Rules                   |
-| ----------- | ------ | -------------------------------- | -------------------------------- | ------------------------ |
-| Create      | POST   | `/documents`                     | Register a blob-backed document. |[18F9AC9C083F49FDA8ACD972B6CC50E4.json](https://www.xenhey.com/api/store/18F9AC9C083F49FDA8ACD972B6CC50E4) |                          |
-| Read (list) | GET    | `/documents?entityType&entityId` | List docs for an entity.         |[7B67BD11FBFE4503AF3B9EEB15E151FF.json](https://www.xenhey.com/api/store/7B67BD11FBFE4503AF3B9EEB15E151FF) |
-| Read (one)  | GET    | `/documents/{documentId}`        | Get document metadata.           |[4E42D71C56CC4BD5A3F29E93D4FFB944.json](https://www.xenhey.com/api/store/4E42D71C56CC4BD5A3F29E93D4FFB944) |
-| Update      | PATCH  | `/documents/{documentId}`        | Update docType/labels.           |[C7B08B8DC51A4B3187EBACA4337A8D01.json](https://www.xenhey.com/api/store/C7B08B8DC51A4B3187EBACA4337A8D01) |
-| Delete      | DELETE | `/documents/{documentId}`        | Remove metadata (and blob opt).  | [77E89F04B2B346DCB087B2F5AF3ED5C0.json](https://www.xenhey.com/api/store/77E89F04B2B346DCB087B2F5AF3ED5C0) |
+| Op          | Method | Path                             | Description                       | Notes         |  Congiguration Rules     |
+| ----------- | ------ | -------------------------------- | -------------------------------- |----------------| ------------------------ |
+| Create      | POST   | `/documents`                     | Register a blob-backed document. |                |[18F9AC9C083F49FDA8ACD972B6CC50E4.json](https://www.xenhey.com/api/store/18F9AC9C083F49FDA8ACD972B6CC50E4) |                          |
+| Read (list) | GET    | `/documents?entityType&entityId` | List docs for an entity.         |                |[7B67BD11FBFE4503AF3B9EEB15E151FF.json](https://www.xenhey.com/api/store/7B67BD11FBFE4503AF3B9EEB15E151FF) |
+| Read (one)  | GET    | `/documents/{documentId}`        | Get document metadata.           |                |[4E42D71C56CC4BD5A3F29E93D4FFB944.json](https://www.xenhey.com/api/store/4E42D71C56CC4BD5A3F29E93D4FFB944) |
+| Update      | PATCH  | `/documents/{documentId}`        | Update docType/labels.           |                |[C7B08B8DC51A4B3187EBACA4337A8D01.json](https://www.xenhey.com/api/store/C7B08B8DC51A4B3187EBACA4337A8D01) |
+| Delete      | DELETE | `/documents/{documentId}`        | Remove metadata (and blob opt).  |                |[77E89F04B2B346DCB087B2F5AF3ED5C0.json](https://www.xenhey.com/api/store/77E89F04B2B346DCB087B2F5AF3ED5C0) |
 
 **Action:** Presign upload: `POST /documents:presign`
 
 # Quotes
 
-| Op          | Method | Path                              | Description                 | Notes         |
-| ----------- | ------ | --------------------------------- | --------------------------- | ------------- |
-| Create      | POST   | `/quotes`                         | Create quote (may refer).   | 201/202.      |
-| Read (list) | GET    | `/quotes?tenantId&status&product` | Search quotes.              |               |
-| Read (one)  | GET    | `/quotes/{quoteId}`               | Get quote detail.           |               |
-| Update      | PATCH  | `/quotes/{quoteId}`               | Update selections/metadata. | If not bound. |
-| Delete      | DELETE | `/quotes/{quoteId}`               | Cancel a quote.             |               |
+| Op          | Method | Path                              | Description                 | Notes         |  Congiguration Rules     |
+| ----------- | ------ | --------------------------------- | --------------------------- | ------------- | ------------------------ |
+| Create      | POST   | `/quotes`                         | Create quote (may refer).   | 201/202.      |[185F8C50FDBF427F85A1AE927D72076B.json](https://www.xenhey.com/api/store/185F8C50FDBF427F85A1AE927D72076B) |
+| Read (list) | GET    | `/quotes?tenantId&status&product` | Search quotes.              |               |[D51014EB20AB4B9C8C0F3EDAECF84ECB.json](https://www.xenhey.com/api/store/D51014EB20AB4B9C8C0F3EDAECF84ECB) |
+| Read (one)  | GET    | `/quotes/{quoteId}`               | Get quote detail.           |               |[201FC63012AB4F2CB39708EA4833FEEB.json](https://www.xenhey.com/api/store/201FC63012AB4F2CB39708EA4833FEEB) |
+| Update      | PATCH  | `/quotes/{quoteId}`               | Update selections/metadata. | If not bound. |[6A6EEB0F762949F4BACC239420FC3CF8.json](https://www.xenhey.com/api/store/6A6EEB0F762949F4BACC239420FC3CF8) |
+| Delete      | DELETE | `/quotes/{quoteId}`               | Cancel a quote.             |               |[9E08D132F39D4CEA96F5E5BCF1284221.json](https://www.xenhey.com/api/store/9E08D132F39D4CEA96F5E5BCF1284221) |
 
 **Action:** Bind: `POST /quotes/{quoteId}/bind`
 
 # Policies
 
-| Op          | Method | Path                                   | Description                          | Notes                     |
-| ----------- | ------ | -------------------------------------- | ------------------------------------ | ------------------------- |
-| Create      | POST   | `/policies`                            | Create policy (direct or post-bind). |                           |
-| Read (list) | GET    | `/policies?tenantId&customerId&status` | Search policies.                     |                           |
-| Read (one)  | GET    | `/policies/{policyId}`                 | Get policy detail.                   |                           |
-| Update      | PATCH  | `/policies/{policyId}`                 | Update admin fields (status, notes). | No coverage risk changes. |
-| Delete      | DELETE | `/policies/{policyId}`                 | Cancel/archive policy.               | Prefer cancel txn.        |
+| Op          | Method | Path                                   | Description                          | Notes                     |  Congiguration Rules     |
+| ----------- | ------ | -------------------------------------- | ------------------------------------ | ------------------------- | ------------------------ |
+| Create      | POST   | `/policies`                            | Create policy (direct or post-bind). |                           |[916C64D72C4848D8A712057D20C45223.json](https://www.xenhey.com/api/store/916C64D72C4848D8A712057D20C45223) |
+| Read (list) | GET    | `/policies?tenantId&customerId&status` | Search policies.                     |                           |[37D48E0F84F8475B88FB3FA48B291062.json](https://www.xenhey.com/api/store/37D48E0F84F8475B88FB3FA48B291062) |
+| Read (one)  | GET    | `/policies/{policyId}`                 | Get policy detail.                   |                           |[69FE186EB835406FA0D5B343CE877282.json](https://www.xenhey.com/api/store/69FE186EB835406FA0D5B343CE877282) |
+| Update      | PATCH  | `/policies/{policyId}`                 | Update admin fields (status, notes). | No coverage risk changes. |[E0566ADB15844782923EDD6F5B2E7DB6.json](https://www.xenhey.com/api/store/E0566ADB15844782923EDD6F5B2E7DB6) |
+| Delete      | DELETE | `/policies/{policyId}`                 | Cancel/archive policy.               | Prefer cancel txn.        |[B7D216BF9A0047D28B37A938268C5B21.json](https://www.xenhey.com/api/store/B7D216BF9A0047D28B37A938268C5B21) |
 
 **Action:** Endorse: `POST /policies/{policyId}/endorse`
 
 # Scheduling (bookings)
 
-| Op          | Method | Path                             | Description                | Notes |
-| ----------- | ------ | -------------------------------- | -------------------------- | ----- |
-| Create      | POST   | `/schedule/book`                 | Book a resource/slot.      |       |
-| Read (list) | GET    | `/schedule/bookings?requestId`   | List bookings for request. |       |
-| Read (one)  | GET    | `/schedule/bookings/{bookingId}` | Get booking.               |       |
-| Update      | PATCH  | `/schedule/bookings/{bookingId}` | Reschedule/cancel.         |       |
-| Delete      | DELETE | `/schedule/bookings/{bookingId}` | Cancel booking.            |       |
+| Op          | Method | Path                             | Description                | Notes |  Congiguration Rules     |
+| ----------- | ------ | -------------------------------- | -------------------------- | ----- | ------------------------ |
+| Create      | POST   | `/schedule/book`                 | Book a resource/slot.      |       |[81E53A5A618441598D5F27C40FAB6684.json](https://www.xenhey.com/api/store/81E53A5A618441598D5F27C40FAB6684) |
+| Read (list) | GET    | `/schedule/bookings?requestId`   | List bookings for request. |       |[6FD975F058764DA8804B75FCCF52A6EC.json](https://www.xenhey.com/api/store/6FD975F058764DA8804B75FCCF52A6EC) |
+| Read (one)  | GET    | `/schedule/bookings/{bookingId}` | Get booking.               |       |[CC0B0E40340D4EC29E9E64CE308B8811.json](https://www.xenhey.com/api/store/CC0B0E40340D4EC29E9E64CE308B8811) |
+| Update      | PATCH  | `/schedule/bookings/{bookingId}` | Reschedule/cancel.         |       |[201D2E9CE5EC498EAAF6D168C1A799E1.json](https://www.xenhey.com/api/store/201D2E9CE5EC498EAAF6D168C1A799E1) |
+| Delete      | DELETE | `/schedule/bookings/{bookingId}` | Cancel booking.            |       |[23046A8E6A924F65B9314F8A022DCB29.json](https://www.xenhey.com/api/store/23046A8E6A924F65B9314F8A022DCB29) |
 
 **Action:** Suggest slots: `POST /schedule/suggest`
 
 # Audit events
 
-| Op          | Method | Path                      | Description                 | Notes                          |
-| ----------- | ------ | ------------------------- | --------------------------- | ------------------------------ |
-| Create      | POST   | `/audit/events`           | Write a custom audit event. | Usually server-side.           |
-| Read (list) | POST   | `/audit/search`           | Search audit by filters.    | Uses POST for complex filters. |
-| Read (one)  | GET    | `/audit/events/{auditId}` | Get one event.              |                                |
-| Update      | —      | —                         | Not typical.                |                                |
-| Delete      | —      | —                         | Not allowed.                | Retain by policy.              |
+| Op          | Method | Path                      | Description                 | Notes                          |  Congiguration Rules     |
+| ----------- | ------ | ------------------------- | --------------------------- | ------------------------------ | ------------------------ |
+| Create      | POST   | `/audit/events`           | Write a custom audit event. | Usually server-side.           |[B1BC1CABC3E54D2E8FF858560A669FAC.json](https://www.xenhey.com/api/store/B1BC1CABC3E54D2E8FF858560A669FAC) |
+| Read (list) | POST   | `/audit/search`           | Search audit by filters.    | Uses POST for complex filters. |[C2D1347E45BC4487968F42CFA6FD78B4.json](https://www.xenhey.com/api/store/C2D1347E45BC4487968F42CFA6FD78B4) |
+| Read (one)  | GET    | `/audit/events/{auditId}` | Get one event.              |                                |[0B7FCB4689934682A8C4662593BF0702.json](https://www.xenhey.com/api/store/0B7FCB4689934682A8C4662593BF0702) |
+| Update      | —      | —                         | Not typical.                |                                |[4EF0762EEF5C411785D4156A02A721AA.json](https://www.xenhey.com/api/store/4EF0762EEF5C411785D4156A02A721AA) |
+| Delete      | —      | —                         | Not allowed.                | Retain by policy.              |[AC705F0B1D4B4CC696FFEF81118C173B.json](https://www.xenhey.com/api/store/AC705F0B1D4B4CC696FFEF81118C173B) |
 
 # Traces (decision)
 
-| Op         | Method | Path                          | Description               | Notes                |
-| ---------- | ------ | ----------------------------- | ------------------------- | -------------------- |
-| Create     | POST   | `/traces`                     | Register a trace pointer. | Engine use.          |
-| Read (one) | GET    | `/claims/{claimId}/trace`     | Get claim decision trace. | Auditor role.        |
-| Update     | PATCH  | `/claims/{claimId}/trace-uri` | Update pointer.           |                      |
-| Delete     | —      | —                             | Not allowed.              | Immutable by design. |
+| Op         | Method | Path                          | Description               | Notes                |  Congiguration Rules     |
+| ---------- | ------ | ----------------------------- | ------------------------- | -------------------- | ------------------------ |
+| Create     | POST   | `/traces`                     | Register a trace pointer. | Engine use.          |[B1BC1CABC3E54D2E8FF858560A669FAC.json](https://www.xenhey.com/api/store/B1BC1CABC3E54D2E8FF858560A669FAC) |
+| Read (one) | GET    | `/claims/{claimId}/trace`     | Get claim decision trace. | Auditor role.        |[B1BC1CABC3E54D2E8FF858560A669FAC.json](https://www.xenhey.com/api/store/B1BC1CABC3E54D2E8FF858560A669FAC) |
+| Update     | PATCH  | `/claims/{claimId}/trace-uri` | Update pointer.           |                      |[B1BC1CABC3E54D2E8FF858560A669FAC.json](https://www.xenhey.com/api/store/B1BC1CABC3E54D2E8FF858560A669FAC) |
+| Delete     | —      | —                             | Not allowed.              | Immutable by design. |[B1BC1CABC3E54D2E8FF858560A669FAC.json](https://www.xenhey.com/api/store/B1BC1CABC3E54D2E8FF858560A669FAC) |
 
 # Tenants
 
-| Op          | Method | Path                  | Description         | Notes        |
-| ----------- | ------ | --------------------- | ------------------- | ------------ |
-| Create      | POST   | `/tenants`            | Create tenant/org.  |              |
-| Read (list) | GET    | `/tenants`            | List tenants.       |              |
-| Read (one)  | GET    | `/tenants/{tenantId}` | Get tenant.         |              |
-| Update      | PATCH  | `/tenants/{tenantId}` | Update status/name. |              |
-| Delete      | DELETE | `/tenants/{tenantId}` | Deactivate tenant.  | Soft-delete. |
+| Op          | Method | Path                  | Description         | Notes        |  Congiguration Rules     |
+| ----------- | ------ | --------------------- | ------------------- | ------------ | ------------------------ |
+| Create      | POST   | `/tenants`            | Create tenant/org.  |              |[5CDB50AFDE9B4A26964F0D264309B106.json](https://www.xenhey.com/api/store/5CDB50AFDE9B4A26964F0D264309B106) |
+| Read (list) | GET    | `/tenants`            | List tenants.       |              |[245B383B470A4D1FAEE7B9D064FBC4DB.json](https://www.xenhey.com/api/store/245B383B470A4D1FAEE7B9D064FBC4DB) |
+| Read (one)  | GET    | `/tenants/{tenantId}` | Get tenant.         |              |[AE7506942AFB44B1AD84909110A3589A.json](https://www.xenhey.com/api/store/AE7506942AFB44B1AD84909110A3589A) |
+| Update      | PATCH  | `/tenants/{tenantId}` | Update status/name. |              |[6F7E422FC5C546E8834F0130351B740E.json](https://www.xenhey.com/api/store/6F7E422FC5C546E8834F0130351B740E) |
+| Delete      | DELETE | `/tenants/{tenantId}` | Deactivate tenant.  | Soft-delete. |[B9109503D67A4230B05342F4B0C24B41.json](https://www.xenhey.com/api/store/B9109503D67A4230B05342F4B0C24B41) |
 
 # Customers
 
-| Op          | Method | Path                         | Description                   | Notes |
-| ----------- | ------ | ---------------------------- | ----------------------------- | ----- |
-| Create      | POST   | `/customers`                 | Create customer/policyholder. |       |
-| Read (list) | GET    | `/customers?tenantId&search` | Search customers.             |       |
-| Read (one)  | GET    | `/customers/{customerId}`    | Get customer.                 |       |
-| Update      | PATCH  | `/customers/{customerId}`    | Update contact fields.        |       |
-| Delete      | DELETE | `/customers/{customerId}`    | Archive customer.             |       |
+| Op          | Method | Path                         | Description                   | Notes |  Congiguration Rules     |
+| ----------- | ------ | ---------------------------- | ----------------------------- | ----- | ------------------------ |
+| Create      | POST   | `/customers`                 | Create customer/policyholder. |       |[E4452A50FED04F3DB61465D992BC6695.json](https://www.xenhey.com/api/store/E4452A50FED04F3DB61465D992BC6695) |
+| Read (list) | GET    | `/customers?tenantId&search` | Search customers.             |       |[00C07F80351742C9934C034833E14123.json](https://www.xenhey.com/api/store/00C07F80351742C9934C034833E14123) |
+| Read (one)  | GET    | `/customers/{customerId}`    | Get customer.                 |       |[4B4F1E42943E484488A2AB1C22554B11.json](https://www.xenhey.com/api/store/4B4F1E42943E484488A2AB1C22554B11) |
+| Update      | PATCH  | `/customers/{customerId}`    | Update contact fields.        |       |[DE9F45756B7D449C8D4CB0BCC9701BDA.json](https://www.xenhey.com/api/store/DE9F45756B7D449C8D4CB0BCC9701BDA) |
+| Delete      | DELETE | `/customers/{customerId}`    | Archive customer.             |       |[3AB90ED0F1034B77A31B8B7E7023DE2E.json](https://www.xenhey.com/api/store/3AB90ED0F1034B77A31B8B7E7023DE2E) |
 
 # Catalog (loss types/coverages)
 
-| Op          | Method | Path                                   | Description              | Notes               |
-| ----------- | ------ | -------------------------------------- | ------------------------ | ------------------- |
-| Create      | POST   | `/catalog/loss-types`                  | Add a loss type (admin). | Optional admin API. |
-| Read (list) | GET    | `/catalog/loss-types?tenantId&product` | List loss types.         | Public read.        |
-| Update      | PATCH  | `/catalog/loss-types/{id}`             | Rename/retire entry.     |                     |
-| Delete      | DELETE | `/catalog/loss-types/{id}`             | Remove/retire.           | Prefer retire flag. |
-| Create      | POST   | `/catalog/coverages`                   | Add coverage option.     |                     |
-| Read (list) | GET    | `/catalog/coverages?tenantId&product`  | List coverages.          |                     |
-| Update      | PATCH  | `/catalog/coverages/{id}`              | Update option.           |                     |
-| Delete      | DELETE | `/catalog/coverages/{id}`              | Retire option.           |                     |
+| Op          | Method | Path                                   | Description              | Notes               |  Congiguration Rules     |
+| ----------- | ------ | -------------------------------------- | ------------------------ | ------------------- | ------------------------ |
+| Create      | POST   | `/catalog/loss-types`                  | Add a loss type (admin). | Optional admin API. |[A07CD489CF784CAD8007167532066D39.json](https://www.xenhey.com/api/store/A07CD489CF784CAD8007167532066D39) |
+| Read (list) | GET    | `/catalog/loss-types?tenantId&product` | List loss types.         | Public read.        |[8519191FE9154A9BBDA27F1483D6F853.json](https://www.xenhey.com/api/store/8519191FE9154A9BBDA27F1483D6F853) |
+| Update      | PATCH  | `/catalog/loss-types/{id}`             | Rename/retire entry.     |                     |[FAA0801B021C443498B9245DAC19F06C.json](https://www.xenhey.com/api/store/FAA0801B021C443498B9245DAC19F06C) |
+| Delete      | DELETE | `/catalog/loss-types/{id}`             | Remove/retire.           | Prefer retire flag. |[D08F2ADAC2A544CC842DCD2FD40FB832.json](https://www.xenhey.com/api/store/D08F2ADAC2A544CC842DCD2FD40FB832) |
+| Create      | POST   | `/catalog/coverages`                   | Add coverage option.     |                     |[4F50595E00034E8A97FCC1A54E044810.json](https://www.xenhey.com/api/store/4F50595E00034E8A97FCC1A54E044810) |
+| Read (list) | GET    | `/catalog/coverages?tenantId&product`  | List coverages.          |                     |[2B6974543290498E82300B66BAC1E458.json](https://www.xenhey.com/api/store/2B6974543290498E82300B66BAC1E458) |
+| Update      | PATCH  | `/catalog/coverages/{id}`              | Update option.           |                     |[511707DE337841ED8BA05CFD3FAE449A.json](https://www.xenhey.com/api/store/511707DE337841ED8BA05CFD3FAE449A) |
+| Delete      | DELETE | `/catalog/coverages/{id}`              | Retire option.           |                     |[D4FE5827AAB743119F11A67F5F1969C3.json](https://www.xenhey.com/api/store/D4FE5827AAB743119F11A67F5F1969C3) |
 
 ---
 
