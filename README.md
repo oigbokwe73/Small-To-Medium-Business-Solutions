@@ -747,13 +747,13 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Documents
 
-| Op          | Method | Path                             | Description                      | Notes                    |
+| Op          | Method | Path                             | Description                      |  Congiguration Rules                   |
 | ----------- | ------ | -------------------------------- | -------------------------------- | ------------------------ |
-| Create      | POST   | `/documents`                     | Register a blob-backed document. |                          |
-| Read (list) | GET    | `/documents?entityType&entityId` | List docs for an entity.         |                          |
-| Read (one)  | GET    | `/documents/{documentId}`        | Get document metadata.           |                          |
-| Update      | PATCH  | `/documents/{documentId}`        | Update docType/labels.           |                          |
-| Delete      | DELETE | `/documents/{documentId}`        | Remove metadata (and blob opt).  | Soft-delete recommended. |
+| Create      | POST   | `/documents`                     | Register a blob-backed document. |[18F9AC9C083F49FDA8ACD972B6CC50E4.json](https://www.xenhey.com/api/store/18F9AC9C083F49FDA8ACD972B6CC50E4) |                          |
+| Read (list) | GET    | `/documents?entityType&entityId` | List docs for an entity.         |[7B67BD11FBFE4503AF3B9EEB15E151FF.json](https://www.xenhey.com/api/store/7B67BD11FBFE4503AF3B9EEB15E151FF) |
+| Read (one)  | GET    | `/documents/{documentId}`        | Get document metadata.           |[4E42D71C56CC4BD5A3F29E93D4FFB944.json](https://www.xenhey.com/api/store/4E42D71C56CC4BD5A3F29E93D4FFB944) |
+| Update      | PATCH  | `/documents/{documentId}`        | Update docType/labels.           |[C7B08B8DC51A4B3187EBACA4337A8D01.json](https://www.xenhey.com/api/store/C7B08B8DC51A4B3187EBACA4337A8D01) |
+| Delete      | DELETE | `/documents/{documentId}`        | Remove metadata (and blob opt).  | [77E89F04B2B346DCB087B2F5AF3ED5C0.json](https://www.xenhey.com/api/store/77E89F04B2B346DCB087B2F5AF3ED5C0) |
 
 **Action:** Presign upload: `POST /documents:presign`
 
