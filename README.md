@@ -654,26 +654,6 @@ By following these steps, you'll have a serverless API in Azure that uses Servic
 
 > **Note:**  Look at the configuration file in the **Config** Folder and created a Table to record information.
 
-## Configuration Files 
-
-> **Note:** The **Configuration** is located in the  FunctionApp  in a **Config** Folder.
-
-|FileName|Description|
-|:----|:----|
-|[FA7BDA37345D4F4881A7473ACDF06B4A.json](https://www.xenhey.com/api/store/FA7BDA37345D4F4881A7473ACDF06B4A)| **Upload File** Parse CSV file --> Write Batched Files To Storage|
-|[35C8400673BD4566AF97227BBC7A2754.json](https://www.xenhey.com/api/store/35C8400673BD4566AF97227BBC7A2754)| **File Parser Event Trigger** Parse CSV file --> File received from SFTP will use this process to parse files|
-|[269CA9B3A0B542E3A5BB713005D591F7.json](https://www.xenhey.com/api/store/269CA9B3A0B542E3A5BB713005D591F7)| **Service Bus Trigger for SQL DB** | Receive JSON payload and insert into SQL DB|
-|[00766FE7DC3E469CB8E3416B9BC6A26C.json](https://www.xenhey.com/api/store/00766FE7DC3E469CB8E3416B9BC6A26C)| **Service Bus Trigger for No SQL DB** | Receive JSON payload and insert into NO SQL DB|
-|[2484F9382E974133A216F8E39BF4C389.json](https://www.xenhey.com/api/store/2484F9382E974133A216F8E39BF4C389)| **File Drop Event Trigger** Send parsed/sharded file  to Send to Service Bus|
-|[C1D791EBB8BF4491A61E3659298F46E8.json](https://www.xenhey.com/api/store/C1D791EBB8BF4491A61E3659298F46E8)| **Search Resullt from NO SQLDB** |
-|[FC8AFFD1677A443D9D2A962A79246372.json](https://www.xenhey.com/api/store/FC8AFFD1677A443D9D2A962A79246372)| **Search SQL DB. Return resultset** |
-|[C51F7629130B448AB4430D1260360C1E.json](https://www.xenhey.com/api/store/C51F7629130B448AB4430D1260360C1E)| **Copy File from SFTP into the pickup folder** |
-|[68AA07F5193441878BFCD5CB372B25FB.json](https://www.xenhey.com/api/store/68AA07F5193441878BFCD5CB372B25FB)| **Create a new Record in NoSQL Database** |
-|[21B8411B3EA24285B52F24B1D968B68A.json](https://www.xenhey.com/api/store/21B8411B3EA24285B52F24B1D968B68A)| **AI Search using Chat GPT Natual Language Processor** |
-
-Below are concise, production-ready tables for **every endpoint** we outlined.
-*Notes:* All mutating endpoints support `X-Idempotency-Key`. Auth is `Bearer <JWT>`. Roles are suggestions—tune to your RBAC.
-
 ---
 Below is a concise CRUD matrix for each resource in the insurance platform. Paths use `{id}` placeholders; send `Authorization: Bearer <JWT>` and `Content-Type: application/json`. Prefer soft-delete via `status`/`archived=true` where noted.
 
@@ -695,18 +675,18 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 
 # Workflow activations (canary map)
 
-| Op          | Method | Path                                                | Description                                 | Notes                      |
-| ----------- | ------ | --------------------------------------------------- | ------------------------------------------- | -------------------------- |
-| Create      | POST   | `/workflow-activations`                             | Add an active mapping (version + rollout%). |                            |
-| Read (list) | GET    | `/workflow-activations?tenantId&product&workflowId` | List activations.                           |                            |
-| Read (one)  | GET    | `/workflow-activations/{activationId}`              | Get activation details.                     |                            |
-| Update      | PATCH  | `/workflow-activations/{activationId}`              | Change rollout%, status.                    |                            |
-| Delete      | DELETE | `/workflow-activations/{activationId}`              | Remove/retire activation.                   | Prefer `status='Retired'`. |
+| Op          | Method | Path                                                | Description                                 | Notes                      | Configuration Rules|
+| ----------- | ------ | --------------------------------------------------- | ------------------------------------------- | -------------------------- |-----------------------|
+| Create      | POST   | `/workflow-activations`                             | Add an active mapping (version + rollout%). |                            |[92AFA5F558C74A1CA368018BA17C3854.json](https://www.xenhey.com/api/store/92AFA5F558C74A1CA368018BA17C3854) |
+| Read (list) | GET    | `/workflow-activations?tenantId&product&workflowId` | List activations.                           |                            |[810EF5E7C1844B678FD8C75800AC7777.json](https://www.xenhey.com/api/store/810EF5E7C1844B678FD8C75800AC7777) |
+| Read (one)  | GET    | `/workflow-activations/{activationId}`              | Get activation details.                     |                            |[C8F49B4E4D3F42DBAAF71CB92442717F.json](https://www.xenhey.com/api/store/C8F49B4E4D3F42DBAAF71CB92442717F) |
+| Update      | PATCH  | `/workflow-activations/{activationId}`              | Change rollout%, status.                    |                            |[32BB34B6EA7F4CEAA2EB670883166D6B.json](https://www.xenhey.com/api/store/32BB34B6EA7F4CEAA2EB670883166D6B) |
+| Delete      | DELETE | `/workflow-activations/{activationId}`              | Remove/retire activation.                   | Prefer `status='Retired'`. |[BC0635BA963948A0A6F55FF73591942A.json](https://www.xenhey.com/api/store/BC0635BA963948A0A6F55FF73591942A) |
 
 # Claims
 
-| Op          | Method | Path                              | Description                                 | Notes                   | Configuration Rules
-| ----------- | ------ | --------------------------------- | ------------------------------------------- | ----------------------- |----------------------- 
+| Op          | Method | Path                              | Description                                 | Notes                   | Configuration Rules|
+| ----------- | ------ | --------------------------------- | ------------------------------------------- | ----------------------- |-----------------------| 
 | Create      | POST   | `/claims`                         | Create claim (FNOL); pins workflow version. | 201 or 202 if gated.    |[28CADF2B04534FDEB5EB5CDF046653ED.json](https://www.xenhey.com/api/store/28CADF2B04534FDEB5EB5CDF046653ED) |
 | Read (list) | GET    | `/claims?tenantId&status&product` | Search/list claims.                         |                         |[E8A5BE338ADB4C6EBDD00947D07B2D89.json](https://www.xenhey.com/api/store/E8A5BE338ADB4C6EBDD00947D07B2D89) |
 | Read (one)  | GET    | `/claims/{claimId}`               | Get claim details.                          |                         |[3DAD00F950D24DCCB367CB2F177E4F91.json](https://www.xenhey.com/api/store/3DAD00F950D24DCCB367CB2F177E4F91) |
