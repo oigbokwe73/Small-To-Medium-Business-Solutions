@@ -1118,6 +1118,301 @@ EXEC ins.usp_WorkflowActivation_SetDistribution
 * SIU hold/clear: `POST /claims/{claimId}/siu-hold` / `POST /claims/{claimId}/siu-clear`
 * Trace URI: `PATCH /claims/{claimId}/trace-uri`
 * Get trace (read-only): `GET /claims/{claimId}/trace`
+* 
+Got it! Below are **ready-to-run T-SQL stored procedures for Claims**.
+*Assumptions:* schema from earlier (`ins.Claims`, `ins.AuditEvents`, etc.) exists, and `ins.usp_Workflow_GetActiveVersion` is available. Uses SQL Server 2019/2022+ (replace `JSON_OBJECT` with a `FOR JSON PATH` fragment if needed).
+
+---
+
+# Create (pins workflow version)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_Create
+  @TenantId   UNIQUEIDENTIFIER,
+  @PolicyId   UNIQUEIDENTIFIER,
+  @Product    NVARCHAR(50),
+  @LossType   NVARCHAR(50),
+  @LossDate   DATE,
+  @EstimatedIndemnity DECIMAL(18,2) = NULL,
+  @WorkflowId NVARCHAR(200),
+  @RequestHash INT,                   -- 0..99 canary bucket
+  @Actor      NVARCHAR(128) = NULL,
+  @OutClaimId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @Version INT;
+  EXEC ins.usp_Workflow_GetActiveVersion
+       @TenantId=@TenantId, @Product=@Product, @WorkflowId=@WorkflowId,
+       @RequestHash=@RequestHash, @OutVersion=@Version OUTPUT;
+
+  IF NOT EXISTS (SELECT 1 FROM ins.Policies WHERE PolicyId=@PolicyId AND TenantId=@TenantId)
+  BEGIN
+    THROW 50001, 'Policy not found for tenant.', 1;
+  END
+
+  BEGIN TRAN;
+    DECLARE @New TABLE (ClaimId UNIQUEIDENTIFIER);
+    INSERT ins.Claims
+      (TenantId, PolicyId, Product, LossType, LossDate, Severity, Status,
+       EstimatedIndemnity, Reserves, Paid, WorkflowId, WorkflowVersion, CreatedBy)
+    OUTPUT inserted.ClaimId INTO @New(ClaimId)
+    VALUES
+      (@TenantId, @PolicyId, @Product, @LossType, @LossDate, NULL, 'Open',
+       @EstimatedIndemnity, 0, 0, @WorkflowId, @Version, @Actor);
+
+    SELECT @OutClaimId = ClaimId FROM @New;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@OutClaimId,@Actor,'Create',
+            JSON_OBJECT('PolicyId':@PolicyId,'Product':@Product,'LossType':@LossType,
+                        'LossDate':@LossDate,'EstimatedIndemnity':@EstimatedIndemnity,
+                        'WorkflowId':@WorkflowId,'Version':@Version));
+  COMMIT;
+END
+```
+
+---
+
+# Update (partial “PATCH” with optimistic concurrency)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_Update
+  @ClaimId UNIQUEIDENTIFIER,
+  @LossType NVARCHAR(50) = NULL,
+  @LossDate DATE = NULL,
+  @EstimatedIndemnity DECIMAL(18,2) = NULL,
+  @Severity NVARCHAR(20) = NULL,            -- optional manual adjustment
+  @Actor NVARCHAR(128) = NULL,
+  @ExpectedRowVersion VARBINARY(8) = NULL   -- pass Claims.RowVersion for OCC
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER;
+  SELECT @TenantId = TenantId FROM ins.Claims WHERE ClaimId=@ClaimId;
+  IF @TenantId IS NULL THROW 40400, 'Claim not found.', 1;
+
+  BEGIN TRAN;
+    UPDATE ins.Claims
+      SET LossType              = COALESCE(@LossType, LossType),
+          LossDate              = COALESCE(@LossDate, LossDate),
+          EstimatedIndemnity    = COALESCE(@EstimatedIndemnity, EstimatedIndemnity),
+          Severity              = COALESCE(@Severity, Severity),
+          ModifiedAt            = SYSUTCDATETIME(),
+          ModifiedBy            = @Actor
+    WHERE ClaimId=@ClaimId
+      AND (@ExpectedRowVersion IS NULL OR RowVersion = @ExpectedRowVersion);
+
+    IF @@ROWCOUNT = 0 AND @ExpectedRowVersion IS NOT NULL
+      BEGIN ROLLBACK; THROW 41200, 'Concurrency conflict (RowVersion mismatch).', 1; END
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@ClaimId,@Actor,'Update',
+            JSON_OBJECT('LossType':@LossType,'LossDate':@LossDate,
+                        'EstimatedIndemnity':@EstimatedIndemnity,'Severity':@Severity));
+  COMMIT;
+END
+```
+
+---
+
+# Get (detail + related)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_Get
+  @ClaimId UNIQUEIDENTIFIER
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  SELECT c.*, p.Product AS PolicyProduct, cust.FullName AS CustomerName
+  FROM ins.Claims c
+  JOIN ins.Policies p   ON p.PolicyId = c.PolicyId
+  JOIN ins.Customers cust ON cust.CustomerId = p.CustomerId
+  WHERE c.ClaimId = @ClaimId;
+
+  SELECT a.* FROM ins.Approvals a WHERE a.EntityType='Claim' AND a.EntityId=@ClaimId;
+  SELECT py.* FROM ins.Payments  py WHERE py.ClaimId=@ClaimId;
+  SELECT d.*  FROM ins.Documents d WHERE d.EntityType='Claim' AND d.EntityId=@ClaimId;
+END
+```
+
+---
+
+# List / Search (paged)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_List
+  @TenantId   UNIQUEIDENTIFIER,
+  @Status     NVARCHAR(30) = NULL,
+  @Product    NVARCHAR(50) = NULL,
+  @PolicyId   UNIQUEIDENTIFIER = NULL,
+  @FromUtc    DATETIME2(3) = NULL,
+  @ToUtc      DATETIME2(3) = NULL,
+  @Page       INT = 1,
+  @PageSize   INT = 50
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  DECLARE @Offset INT = (@Page-1) * @PageSize;
+
+  ;WITH F AS (
+    SELECT c.*
+    FROM ins.Claims c
+    WHERE c.TenantId = @TenantId
+      AND (@Status  IS NULL OR c.Status  = @Status)
+      AND (@Product IS NULL OR c.Product = @Product)
+      AND (@PolicyId IS NULL OR c.PolicyId = @PolicyId)
+      AND (@FromUtc IS NULL OR c.CreatedAt >= @FromUtc)
+      AND (@ToUtc   IS NULL OR c.CreatedAt <  @ToUtc)
+  )
+  SELECT *
+  FROM F
+  ORDER BY CreatedAt DESC
+  OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+
+  SELECT COUNT(*) AS TotalCount FROM F;
+END
+```
+
+---
+
+# Set Status (engine/admin)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_SetStatus
+  @ClaimId   UNIQUEIDENTIFIER,
+  @NewStatus NVARCHAR(30),     -- 'Open','PendingApproval','Settled','Closed','Denied'
+  @Actor     NVARCHAR(128) = NULL,
+  @Reason    NVARCHAR(400) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF @NewStatus NOT IN ('Open','PendingApproval','Settled','Closed','Denied')
+    THROW 40010, 'Invalid status.', 1;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER;
+  SELECT @TenantId = TenantId FROM ins.Claims WHERE ClaimId=@ClaimId;
+  IF @TenantId IS NULL THROW 40400, 'Claim not found.', 1;
+
+  BEGIN TRAN;
+    UPDATE ins.Claims
+      SET Status=@NewStatus, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+    WHERE ClaimId=@ClaimId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@ClaimId,@Actor,'StatusChange',
+            JSON_OBJECT('NewStatus':@NewStatus,'Reason':@Reason));
+  COMMIT;
+END
+```
+
+---
+
+# Set Trace URI (decision trace pointer)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_SetTraceUri
+  @ClaimId  UNIQUEIDENTIFIER,
+  @TraceUri NVARCHAR(400),
+  @Actor    NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER;
+  SELECT @TenantId = TenantId FROM ins.Claims WHERE ClaimId=@ClaimId;
+  IF @TenantId IS NULL THROW 40400, 'Claim not found.', 1;
+
+  BEGIN TRAN;
+    UPDATE ins.Claims
+      SET TraceUri=@TraceUri, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+    WHERE ClaimId=@ClaimId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@ClaimId,@Actor,'SetTraceUri',
+            JSON_OBJECT('TraceUri':@TraceUri));
+  COMMIT;
+END
+```
+
+---
+
+# Adjust Reserves (with audit)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_AdjustReserves
+  @ClaimId     UNIQUEIDENTIFIER,
+  @NewReserves DECIMAL(18,2),
+  @Reason      NVARCHAR(400) = NULL,
+  @Actor       NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER, @OldRes DECIMAL(18,2);
+  SELECT @TenantId = TenantId, @OldRes = Reserves FROM ins.Claims WHERE ClaimId=@ClaimId;
+  IF @TenantId IS NULL THROW 40400, 'Claim not found.', 1;
+
+  BEGIN TRAN;
+    UPDATE ins.Claims
+      SET Reserves = @NewReserves, ModifiedAt = SYSUTCDATETIME(), ModifiedBy = @Actor
+    WHERE ClaimId=@ClaimId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@ClaimId,@Actor,'ReservesAdjusted',
+            JSON_OBJECT('OldReserves':@OldRes,'NewReserves':@NewReserves,'Reason':@Reason));
+  COMMIT;
+END
+```
+
+---
+
+# Set Severity (optional manual override)
+
+```sql
+CREATE OR ALTER PROCEDURE ins.usp_Claim_SetSeverity
+  @ClaimId  UNIQUEIDENTIFIER,
+  @Severity NVARCHAR(20),        -- 'low','med','high' (align with your enums)
+  @Reason   NVARCHAR(400) = NULL,
+  @Actor    NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF @Severity NOT IN ('low','med','high')
+    THROW 40011, 'Invalid severity.', 1;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER, @Old NVARCHAR(20);
+  SELECT @TenantId = TenantId, @Old = Severity FROM ins.Claims WHERE ClaimId=@ClaimId;
+  IF @TenantId IS NULL THROW 40400, 'Claim not found.', 1;
+
+  BEGIN TRAN;
+    UPDATE ins.Claims
+      SET Severity=@Severity, ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+    WHERE ClaimId=@ClaimId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId,'Claim',@ClaimId,@Actor,'SeveritySet',
+            JSON_OBJECT('OldSeverity':@Old,'NewSeverity':@Severity,'Reason':@Reason));
+  COMMIT;
+END
+```
+
+---
+
+## Notes / Options
+
+* **Concurrency:** pass `@ExpectedRowVersion` to `usp_Claim_Update` for optimistic locking.
+* **Soft delete:** prefer `usp_Claim_SetStatus` to `Closed/Denied` rather than DELETE.
+* **Idempotency:** handle at API layer with `X-Idempotency-Key`; table design can add a unique key if needed.
+* **JSON construction:** if your SQL version lacks `JSON_OBJECT`, replace payloads with `SELECT ... FOR JSON PATH, WITHOUT_ARRAY_WRAPPER`.
+
+
 
 # Approvals
 
