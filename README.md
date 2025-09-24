@@ -672,6 +672,424 @@ Below is a concise CRUD matrix for each resource in the insurance platform. Path
 * **Resolve active**: `GET /workflows/{workflowId}/active?tenantId&product&requestHash`
 * **Activate**: `POST /workflows/{workflowId}/activate`
 * **Retire**: `POST /workflows/{workflowId}/retire`
+* 
+
+Here are **production-ready T-SQL stored procedures** for the Workflows domain, aligned to the schema we defined earlier (`ins.WorkflowDefinitions`, `ins.WorkflowActivations`). They cover version registration, lookup, updates, safe activation/canary, retirement, and resolution.
+
+> Assumes the `ins` schema and tables already exist.
+
+```sql
+-- =========================================
+-- 1) Register / Read / Update / Delete  (WorkflowDefinitions)
+-- =========================================
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_RegisterVersion
+    @TenantId     UNIQUEIDENTIFIER,
+    @Product      NVARCHAR(50),
+    @WorkflowId   NVARCHAR(200),
+    @Version      INT,
+    @StorageUrl   NVARCHAR(400),
+    @Sha256       CHAR(64) = NULL,
+    @CreatedBy    NVARCHAR(128) = NULL,
+    @OutWorkflowDefId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF EXISTS (
+      SELECT 1 FROM ins.WorkflowDefinitions
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version
+  )
+  BEGIN
+      RAISERROR('Workflow definition already exists for this tenant/product/workflow/version.',16,1); RETURN;
+  END
+
+  DECLARE @New TABLE (WorkflowDefId UNIQUEIDENTIFIER);
+  INSERT ins.WorkflowDefinitions (TenantId, Product, WorkflowId, Version, StorageUrl, Sha256, CreatedBy)
+  OUTPUT inserted.WorkflowDefId INTO @New(WorkflowDefId)
+  VALUES (@TenantId, @Product, @WorkflowId, @Version, @StorageUrl, @Sha256, @CreatedBy);
+
+  SELECT @OutWorkflowDefId = WorkflowDefId FROM @New;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_GetVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  SELECT WorkflowDefId, TenantId, Product, WorkflowId, Version, StorageUrl, Sha256, CreatedAt, CreatedBy
+  FROM ins.WorkflowDefinitions
+  WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_ListVersions
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200)
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  SELECT WorkflowDefId, Version, StorageUrl, Sha256, CreatedAt, CreatedBy
+  FROM ins.WorkflowDefinitions
+  WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId
+  ORDER BY Version DESC;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_UpdateVersionMetadata
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT,
+    @StorageUrl NVARCHAR(400) = NULL,
+    @Sha256     CHAR(64) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM ins.WorkflowDefinitions
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version
+  )
+  BEGIN
+      RAISERROR('Workflow definition not found.',16,1); RETURN;
+  END
+
+  UPDATE ins.WorkflowDefinitions
+     SET StorageUrl = COALESCE(@StorageUrl, StorageUrl),
+         Sha256     = COALESCE(@Sha256, Sha256)
+   WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_DeleteVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF EXISTS (
+      SELECT 1 FROM ins.WorkflowActivations
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version
+  )
+  BEGIN
+      RAISERROR('Cannot delete: version is referenced by an activation. Retire activation first.',16,1); RETURN;
+  END
+
+  DELETE FROM ins.WorkflowDefinitions
+   WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version;
+
+  IF @@ROWCOUNT = 0
+      RAISERROR('Workflow definition not found or already deleted.',16,1);
+END
+GO
+
+-- =========================================
+-- 2) Activation / Canary / Retirement  (WorkflowActivations)
+-- =========================================
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_ActivateVersion
+    @TenantId        UNIQUEIDENTIFIER,
+    @Product         NVARCHAR(50),
+    @WorkflowId      NVARCHAR(200),
+    @Version         INT,
+    @RolloutPercent  TINYINT,             -- 0..100
+    @ActivatedBy     NVARCHAR(128) = NULL,
+    @OutActivationId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+  IF @RolloutPercent < 0 OR @RolloutPercent > 100
+  BEGIN RAISERROR('RolloutPercent must be 0..100.',16,1); RETURN; END
+
+  IF NOT EXISTS (
+      SELECT 1 FROM ins.WorkflowDefinitions
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version
+  )
+  BEGIN RAISERROR('Workflow definition not found.',16,1); RETURN; END
+
+  BEGIN TRAN;
+
+    DECLARE @ExistingActive INT = (
+      SELECT COALESCE(SUM(RolloutPercent),0)
+      FROM ins.WorkflowActivations
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+    );
+
+    IF @ExistingActive + @RolloutPercent > 100
+    BEGIN
+      ROLLBACK; RAISERROR('Sum of active rollout percentages would exceed 100.',16,1); RETURN;
+    END
+
+    DECLARE @PrevVersion INT = (
+      SELECT TOP 1 Version
+      FROM ins.WorkflowActivations
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+      ORDER BY ActivatedAt DESC
+    );
+
+    DECLARE @New TABLE (ActivationId UNIQUEIDENTIFIER);
+    INSERT ins.WorkflowActivations (TenantId, Product, WorkflowId, Version, RolloutPercent, Status, ActivatedBy, PreviousVersion)
+    OUTPUT inserted.ActivationId INTO @New(ActivationId)
+    VALUES (@TenantId, @Product, @WorkflowId, @Version, @RolloutPercent, 'Active', @ActivatedBy, @PrevVersion);
+
+    SELECT @OutActivationId = ActivationId FROM @New;
+
+  COMMIT;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_RetireVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Version    INT,
+    @Actor      NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  UPDATE ins.WorkflowActivations
+     SET Status='Retired'
+   WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Version=@Version AND Status='Active';
+
+  IF @@ROWCOUNT = 0
+      RAISERROR('No active activation found for the specified version.',16,1);
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_WorkflowActivation_Update
+    @ActivationId   UNIQUEIDENTIFIER,
+    @RolloutPercent TINYINT = NULL,      -- optional
+    @Status         NVARCHAR(20) = NULL  -- 'Active' | 'Retired'
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF NOT EXISTS (SELECT 1 FROM ins.WorkflowActivations WHERE ActivationId=@ActivationId)
+  BEGIN RAISERROR('Activation not found.',16,1); RETURN; END
+
+  DECLARE @TenantId UNIQUEIDENTIFIER, @Product NVARCHAR(50), @WorkflowId NVARCHAR(200);
+  SELECT @TenantId=TenantId, @Product=Product, @WorkflowId=WorkflowId FROM ins.WorkflowActivations WHERE ActivationId=@ActivationId;
+
+  BEGIN TRAN;
+
+    IF @RolloutPercent IS NOT NULL
+    BEGIN
+      IF @RolloutPercent < 0 OR @RolloutPercent > 100
+      BEGIN ROLLBACK; RAISERROR('RolloutPercent must be 0..100.',16,1); RETURN; END
+
+      -- Check new total for this workflow across ACTIVE rows, substituting the new percent for this activation
+      DECLARE @Current INT = (
+        SELECT COALESCE(SUM(CASE WHEN ActivationId=@ActivationId THEN @RolloutPercent ELSE RolloutPercent END),0)
+        FROM ins.WorkflowActivations
+        WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+      );
+      IF @Current > 100
+      BEGIN ROLLBACK; RAISERROR('Sum of active rollout percentages would exceed 100.',16,1); RETURN; END
+    END
+
+    UPDATE ins.WorkflowActivations
+       SET RolloutPercent = COALESCE(@RolloutPercent, RolloutPercent),
+           Status         = COALESCE(@Status, Status)
+     WHERE ActivationId=@ActivationId;
+
+  COMMIT;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_WorkflowActivation_Get
+    @ActivationId UNIQUEIDENTIFIER
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT * FROM ins.WorkflowActivations WHERE ActivationId=@ActivationId;
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_WorkflowActivation_List
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Status     NVARCHAR(20) = NULL       -- optional filter
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  SELECT ActivationId, Version, RolloutPercent, Status, ActivatedAt, ActivatedBy, PreviousVersion
+  FROM ins.WorkflowActivations
+  WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId
+    AND (@Status IS NULL OR Status=@Status)
+  ORDER BY ActivatedAt DESC;
+END
+GO
+
+-- =========================================
+-- 3) Resolve active version (canary-aware)
+-- =========================================
+
+CREATE OR ALTER PROCEDURE ins.usp_Workflow_GetActiveVersion
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @RequestHash INT,                  -- 0..99 (ABS(CHECKSUM(key)) % 100)
+    @OutVersion INT OUTPUT
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  ;WITH Active AS (
+      SELECT Version, RolloutPercent
+      FROM ins.WorkflowActivations
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+  ),
+  Buckets AS (
+      SELECT Version,
+             RolloutPercent,
+             SUM(RolloutPercent) OVER (ORDER BY Version) - RolloutPercent AS StartPct
+      FROM Active
+  )
+  SELECT TOP 1 @OutVersion = Version
+  FROM Buckets
+  WHERE @RequestHash >= StartPct AND @RequestHash < (StartPct + RolloutPercent)
+  ORDER BY Version;
+
+  -- Fallback: highest ActivatedAt if no bucket matched (e.g., total < 100)
+  IF @OutVersion IS NULL
+      SELECT TOP 1 @OutVersion = Version
+      FROM ins.WorkflowActivations
+      WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+      ORDER BY ActivatedAt DESC;
+END
+GO
+
+-- =========================================
+-- 4) Optional: Set full rollout distribution atomically (TVP)
+-- =========================================
+
+-- Table type for distributions (create once)
+IF NOT EXISTS (SELECT 1 FROM sys.types WHERE is_table_type=1 AND name='RolloutDistributionTT')
+BEGIN
+  CREATE TYPE ins.RolloutDistributionTT AS TABLE (
+      Version INT NOT NULL,
+      RolloutPercent TINYINT NOT NULL CHECK (RolloutPercent BETWEEN 0 AND 100)
+  );
+END
+GO
+
+CREATE OR ALTER PROCEDURE ins.usp_WorkflowActivation_SetDistribution
+    @TenantId   UNIQUEIDENTIFIER,
+    @Product    NVARCHAR(50),
+    @WorkflowId NVARCHAR(200),
+    @Distribution ins.RolloutDistributionTT READONLY,  -- rows: (Version, RolloutPercent)
+    @Actor NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  -- Validate sum
+  IF (SELECT COALESCE(SUM(RolloutPercent),0) FROM @Distribution) > 100
+  BEGIN RAISERROR('Distribution exceeds 100%.',16,1); RETURN; END
+
+  -- Validate versions exist
+  IF EXISTS (
+      SELECT 1 d
+      FROM @Distribution d
+      LEFT JOIN ins.WorkflowDefinitions wd
+        ON wd.TenantId=@TenantId AND wd.Product=@Product AND wd.WorkflowId=@WorkflowId AND wd.Version=d.Version
+      WHERE wd.WorkflowDefId IS NULL
+  )
+  BEGIN RAISERROR('One or more versions in the distribution are not registered.',16,1); RETURN; END
+
+  BEGIN TRAN;
+
+    -- Retire all current actives not in new distribution
+    UPDATE ins.WorkflowActivations
+       SET Status='Retired'
+     WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId
+       AND Status='Active'
+       AND Version NOT IN (SELECT Version FROM @Distribution);
+
+    -- Upsert each distribution row
+    MERGE ins.WorkflowActivations AS tgt
+    USING (
+      SELECT @TenantId AS TenantId, @Product AS Product, @WorkflowId AS WorkflowId, Version, RolloutPercent
+      FROM @Distribution
+    ) AS src
+    ON (tgt.TenantId=src.TenantId AND tgt.Product=src.Product AND tgt.WorkflowId=src.WorkflowId
+        AND tgt.Version=src.Version AND tgt.Status='Active')
+    WHEN MATCHED THEN
+       UPDATE SET RolloutPercent = src.RolloutPercent
+    WHEN NOT MATCHED THEN
+       INSERT (TenantId, Product, WorkflowId, Version, RolloutPercent, Status, ActivatedBy, PreviousVersion)
+       VALUES (src.TenantId, src.Product, src.WorkflowId, src.Version, src.RolloutPercent, 'Active', @Actor,
+               (SELECT TOP 1 Version FROM ins.WorkflowActivations
+                 WHERE TenantId=@TenantId AND Product=@Product AND WorkflowId=@WorkflowId AND Status='Active'
+                 ORDER BY ActivatedAt DESC))
+    ;
+
+  COMMIT;
+END
+GO
+```
+
+### Usage examples
+
+```sql
+-- Register a new version
+DECLARE @defId UNIQUEIDENTIFIER;
+EXEC ins.usp_Workflow_RegisterVersion
+  @TenantId='F2B9E1F0-1B1C-4A10-9F7B-2F8D7B2E2A10',
+  @Product='auto',
+  @WorkflowId='claims.fnol.auto',
+  @Version=3,
+  @StorageUrl='https://blob/workflows/claims.fnol.auto/v3.json',
+  @Sha256=NULL,
+  @CreatedBy='rules-admin@insurer.com',
+  @OutWorkflowDefId=@defId OUTPUT;
+
+-- Activate v3 at 25% canary
+DECLARE @actId UNIQUEIDENTIFIER;
+EXEC ins.usp_Workflow_ActivateVersion
+  @TenantId='F2B9E1F0-1B1C-4A10-9F7B-2F8D7B2E2A10',
+  @Product='auto',
+  @WorkflowId='claims.fnol.auto',
+  @Version=3,
+  @RolloutPercent=25,
+  @ActivatedBy='rules-admin@insurer.com',
+  @OutActivationId=@actId OUTPUT;
+
+-- Resolve active version for a request bucket
+DECLARE @v INT;
+EXEC ins.usp_Workflow_GetActiveVersion
+  @TenantId='F2B9E1F0-1B1C-4A10-9F7B-2F8D7B2E2A10',
+  @Product='auto',
+  @WorkflowId='claims.fnol.auto',
+  @RequestHash=42,
+  @OutVersion=@v OUTPUT;
+
+-- Atomically set distribution to 100% v3 (cutover)
+DECLARE @dist ins.RolloutDistributionTT;
+INSERT @dist VALUES (3, 100);
+EXEC ins.usp_WorkflowActivation_SetDistribution
+  @TenantId='F2B9E1F0-1B1C-4A10-9F7B-2F8D7B2E2A10',
+  @Product='auto',
+  @WorkflowId='claims.fnol.auto',
+  @Distribution=@dist,
+  @Actor='rules-admin@insurer.com';
+```
+
+
 
 # Workflow activations (canary map)
 
