@@ -1124,6 +1124,325 @@ Got it! Below are **ready-to-run T-SQL stored procedures for Claims**.
 
 ---
 
+
+Below are **T-SQL stored procedures** for the **Approvals** domain, aligned to the schema we defined earlier (`ins.Approvals`, `ins.AuditEvents`). They cover create, decide, get, list, reassign, expire (single), and bulk-expire (by age). Each proc uses transactions, optimistic checks, and writes audit events.
+
+```sql
+/* =========================================================
+   APPROVALS: STORED PROCEDURES (schema: ins)
+   Tables used: ins.Approvals, ins.AuditEvents, ins.Claims (optional side-effect)
+   Status values: 'Pending','Approved','Rejected','Expired'
+   ========================================================= */
+
+------------------------------------------------------------
+-- Create a pending approval (idempotent by natural key)
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_CreatePending
+    @TenantId    UNIQUEIDENTIFIER,
+    @EntityType  NVARCHAR(30),       -- 'Claim' | 'Quote' | 'Policy'
+    @EntityId    UNIQUEIDENTIFIER,
+    @GateId      NVARCHAR(100),
+    @Approver    NVARCHAR(256),      -- role:Supervisor or user principal
+    @Actor       NVARCHAR(128) = NULL,
+    @ContextJson NVARCHAR(MAX) = NULL,  -- optional, for audit payload
+    @OutApprovalId UNIQUEIDENTIFIER OUTPUT
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  BEGIN TRAN;
+    -- If a matching Pending already exists, return it (idempotent behavior)
+    SELECT TOP 1 @OutApprovalId = ApprovalId
+    FROM ins.Approvals WITH (UPDLOCK, HOLDLOCK)
+    WHERE TenantId=@TenantId AND EntityType=@EntityType AND EntityId=@EntityId
+      AND GateId=@GateId AND Approver=@Approver AND Status='Pending';
+
+    IF @OutApprovalId IS NULL
+    BEGIN
+      DECLARE @New TABLE (ApprovalId UNIQUEIDENTIFIER);
+      INSERT ins.Approvals (TenantId, EntityType, EntityId, GateId, Approver, Status, CreatedBy)
+      OUTPUT inserted.ApprovalId INTO @New(ApprovalId)
+      VALUES (@TenantId, @EntityType, @EntityId, @GateId, @Approver, 'Pending', @Actor);
+
+      SELECT @OutApprovalId = ApprovalId FROM @New;
+
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Approval', @OutApprovalId, @Actor, 'ApprovalCreated',
+              JSON_OBJECT('GateId':@GateId,'Approver':@Approver,'Context':JSON_QUERY(@ContextJson)));
+    END
+    ELSE
+    BEGIN
+      -- Still record that we "attempted" to create a duplicate pending
+      INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+      VALUES (@TenantId, 'Approval', @OutApprovalId, @Actor, 'ApprovalCreateDuplicate',
+              JSON_OBJECT('GateId':@GateId,'Approver':@Approver));
+    END
+  COMMIT;
+END
+GO
+
+------------------------------------------------------------
+-- Decide an approval (approve / reject) with optimistic check
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_Decide
+    @ApprovalId UNIQUEIDENTIFIER,
+    @Decision   NVARCHAR(20),      -- 'Approved' | 'Rejected'
+    @Reason     NVARCHAR(400) = NULL,
+    @Actor      NVARCHAR(128) = NULL,
+    @RowVersion BINARY(8) = NULL   -- optional optimistic concurrency
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  IF @Decision NOT IN ('Approved','Rejected')
+  BEGIN
+    RAISERROR('Invalid decision. Must be Approved or Rejected.', 16, 1); RETURN;
+  END
+
+  BEGIN TRAN;
+
+    DECLARE @TenantId UNIQUEIDENTIFIER, @EntityType NVARCHAR(30), @EntityId UNIQUEIDENTIFIER, @GateId NVARCHAR(100);
+
+    -- Update only if currently Pending (and rowversion matches if provided)
+    UPDATE ins.Approvals
+      SET Status=@Decision, Reason=@Reason, DecidedAt=SYSUTCDATETIME()
+    WHERE ApprovalId=@ApprovalId
+      AND Status='Pending'
+      AND (@RowVersion IS NULL OR RowVersion=@RowVersion);
+
+    IF @@ROWCOUNT = 0
+    BEGIN
+      ROLLBACK; RAISERROR('Approval not in Pending state, not found, or rowversion mismatch.', 16, 1); RETURN;
+    END
+
+    SELECT @TenantId=TenantId, @EntityType=EntityType, @EntityId=EntityId, @GateId=GateId
+    FROM ins.Approvals WHERE ApprovalId=@ApprovalId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId, 'Approval', @ApprovalId, @Actor, CONCAT('Approval', @Decision),
+            JSON_OBJECT('GateId':@GateId,'Reason':@Reason));
+
+    -- Optional domain side-effect for Claims: move out of PendingApproval / or Deny
+    IF @EntityType='Claim' AND @Decision='Approved'
+      UPDATE ins.Claims SET Status='Open', ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+      WHERE ClaimId=@EntityId AND Status='PendingApproval';
+
+    IF @EntityType='Claim' AND @Decision='Rejected'
+      UPDATE ins.Claims SET Status='Denied', ModifiedAt=SYSUTCDATETIME(), ModifiedBy=@Actor
+      WHERE ClaimId=@EntityId;
+
+  COMMIT;
+END
+GO
+
+------------------------------------------------------------
+-- Get a single approval by Id
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_Get
+    @ApprovalId UNIQUEIDENTIFIER
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT a.*
+  FROM ins.Approvals a
+  WHERE a.ApprovalId=@ApprovalId;
+
+  -- Optionally include related audit trail
+  SELECT TOP 100 ae.*
+  FROM ins.AuditEvents ae
+  WHERE ae.EntityType='Approval' AND ae.EntityId=@ApprovalId
+  ORDER BY ae.CreatedAt DESC;
+END
+GO
+
+------------------------------------------------------------
+-- List approvals (filterable + paging)
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_List
+    @TenantId    UNIQUEIDENTIFIER,
+    @EntityType  NVARCHAR(30) = NULL,
+    @EntityId    UNIQUEIDENTIFIER = NULL,
+    @Approver    NVARCHAR(256) = NULL,
+    @Status      NVARCHAR(20) = NULL,     -- Pending/Approved/Rejected/Expired
+    @GateId      NVARCHAR(100) = NULL,
+    @CreatedFrom DATETIME2(3) = NULL,
+    @CreatedTo   DATETIME2(3) = NULL,
+    @PageNumber  INT = 1,
+    @PageSize    INT = 50
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  IF @PageNumber < 1 SET @PageNumber = 1;
+  IF @PageSize   < 1 SET @PageSize   = 50;
+
+  SELECT a.*
+  FROM ins.Approvals a
+  WHERE a.TenantId=@TenantId
+    AND (@EntityType IS NULL OR a.EntityType=@EntityType)
+    AND (@EntityId  IS NULL OR a.EntityId=@EntityId)
+    AND (@Approver  IS NULL OR a.Approver=@Approver)
+    AND (@Status    IS NULL OR a.Status=@Status)
+    AND (@GateId    IS NULL OR a.GateId=@GateId)
+    AND (@CreatedFrom IS NULL OR a.CreatedAt >= @CreatedFrom)
+    AND (@CreatedTo   IS NULL OR a.CreatedAt <  @CreatedTo)
+  ORDER BY a.CreatedAt DESC
+  OFFSET (@PageNumber-1)*@PageSize ROWS FETCH NEXT @PageSize ROWS ONLY;
+END
+GO
+
+------------------------------------------------------------
+-- Reassign a pending approval to a new approver
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_Reassign
+    @ApprovalId   UNIQUEIDENTIFIER,
+    @NewApprover  NVARCHAR(256),
+    @Reason       NVARCHAR(400) = NULL,
+    @Actor        NVARCHAR(128) = NULL,
+    @RowVersion   BINARY(8) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER, @EntityType NVARCHAR(30), @EntityId UNIQUEIDENTIFIER, @GateId NVARCHAR(100);
+
+  BEGIN TRAN;
+
+    -- Load current for checks
+    SELECT @TenantId=TenantId, @EntityType=EntityType, @EntityId=EntityId, @GateId=GateId
+    FROM ins.Approvals WHERE ApprovalId=@ApprovalId;
+
+    IF @TenantId IS NULL
+    BEGIN
+      ROLLBACK; RAISERROR('Approval not found.', 16, 1); RETURN;
+    END
+
+    -- Prevent creating duplicate pending for same (entity, gate, approver)
+    IF EXISTS (
+      SELECT 1 FROM ins.Approvals
+      WHERE TenantId=@TenantId AND EntityType=@EntityType AND EntityId=@EntityId
+        AND GateId=@GateId AND Approver=@NewApprover AND Status='Pending'
+        AND ApprovalId <> @ApprovalId
+    )
+    BEGIN
+      ROLLBACK; RAISERROR('Target approver already has a pending approval for this gate.', 16, 1); RETURN;
+    END
+
+    UPDATE ins.Approvals
+       SET Approver=@NewApprover
+     WHERE ApprovalId=@ApprovalId
+       AND Status='Pending'
+       AND (@RowVersion IS NULL OR RowVersion=@RowVersion);
+
+    IF @@ROWCOUNT = 0
+    BEGIN
+      ROLLBACK; RAISERROR('Approval not in Pending state, not found, or rowversion mismatch.', 16, 1); RETURN;
+    END
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId, 'Approval', @ApprovalId, @Actor, 'ApprovalReassigned',
+            JSON_OBJECT('GateId':@GateId,'NewApprover':@NewApprover,'Reason':@Reason));
+
+  COMMIT;
+END
+GO
+
+------------------------------------------------------------
+-- Expire (cancel) a pending approval by Id
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_Expire
+    @ApprovalId UNIQUEIDENTIFIER,
+    @Reason     NVARCHAR(400) = NULL,
+    @Actor      NVARCHAR(128) = NULL,
+    @RowVersion BINARY(8) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @TenantId UNIQUEIDENTIFIER, @EntityType NVARCHAR(30), @EntityId UNIQUEIDENTIFIER, @GateId NVARCHAR(100);
+
+  BEGIN TRAN;
+
+    UPDATE ins.Approvals
+       SET Status='Expired', Reason=ISNULL(@Reason, Reason), DecidedAt=SYSUTCDATETIME()
+     WHERE ApprovalId=@ApprovalId
+       AND Status='Pending'
+       AND (@RowVersion IS NULL OR RowVersion=@RowVersion);
+
+    IF @@ROWCOUNT = 0
+    BEGIN
+      ROLLBACK; RAISERROR('Approval not in Pending state, not found, or rowversion mismatch.', 16, 1); RETURN;
+    END
+
+    SELECT @TenantId=TenantId, @EntityType=EntityType, @EntityId=EntityId, @GateId=GateId
+    FROM ins.Approvals WHERE ApprovalId=@ApprovalId;
+
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    VALUES (@TenantId, 'Approval', @ApprovalId, @Actor, 'ApprovalExpired',
+            JSON_OBJECT('GateId':@GateId,'Reason':@Reason));
+
+  COMMIT;
+END
+GO
+
+------------------------------------------------------------
+-- Bulk-expire old pending approvals by age (minutes)
+------------------------------------------------------------
+CREATE OR ALTER PROCEDURE ins.usp_Approval_BulkExpireByAge
+    @TenantId        UNIQUEIDENTIFIER,
+    @OlderThanMinutes INT,                -- e.g., 1440 for 24h
+    @GateId          NVARCHAR(100) = NULL,
+    @Actor           NVARCHAR(128) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+
+  DECLARE @now DATETIME2(3) = SYSUTCDATETIME();
+
+  -- Collect affected rows
+  DECLARE @Affected TABLE (
+    ApprovalId UNIQUEIDENTIFIER,
+    EntityType NVARCHAR(30),
+    EntityId   UNIQUEIDENTIFIER,
+    GateId     NVARCHAR(100)
+  );
+
+  BEGIN TRAN;
+
+    UPDATE a
+       SET a.Status='Expired',
+           a.Reason=COALESCE(a.Reason,'Auto-expired by policy'),
+           a.DecidedAt=@now
+      OUTPUT inserted.ApprovalId, inserted.EntityType, inserted.EntityId, inserted.GateId INTO @Affected(ApprovalId,EntityType,EntityId,GateId)
+    FROM ins.Approvals a
+    WHERE a.TenantId=@TenantId
+      AND a.Status='Pending'
+      AND (@GateId IS NULL OR a.GateId=@GateId)
+      AND DATEDIFF(MINUTE, a.CreatedAt, @now) >= @OlderThanMinutes;
+
+    -- Audit for each affected approval
+    INSERT ins.AuditEvents (TenantId, EntityType, EntityId, Actor, Action, PayloadJson)
+    SELECT @TenantId, 'Approval', af.ApprovalId, @Actor, 'ApprovalExpired',
+           JSON_OBJECT('GateId':af.GateId,'Reason':'Bulk expire by age (minutes)', 'OlderThanMinutes':@OlderThanMinutes)
+    FROM @Affected af;
+
+  COMMIT;
+
+  -- Return affected ids
+  SELECT * FROM @Affected;
+END
+GO
+```
+
+**Notes**
+
+* **Idempotency:** `usp_Approval_CreatePending` returns an existing pending approval if the same gate/approver already exists (per your unique index).
+* **Optimistic concurrency:** `@RowVersion` is optional in `Decide`, `Reassign`, and `Expire`; pass it from the caller to avoid lost updates.
+* **Audit trail:** Every proc writes to `ins.AuditEvents` with a clear `Action` and JSON payload.
+* **Cancel vs. Expire:** We use **Expired** as the canonical “cancelled” state to match the table’s status constraint.
+* **Domain side-effects:** `Decide` optionally updates `ins.Claims` when `EntityType='Claim'`. Remove/extend as needed for `Quote`/`Policy`.
+
+
 # Create (pins workflow version)
 
 ```sql
