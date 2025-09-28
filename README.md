@@ -1119,9 +1119,6 @@ EXEC ins.usp_WorkflowActivation_SetDistribution
 * Trace URI: `PATCH /claims/{claimId}/trace-uri`
 * Get trace (read-only): `GET /claims/{claimId}/trace`
 * 
-Got it! Below are **ready-to-run T-SQL stored procedures for Claims**.
-*Assumptions:* schema from earlier (`ins.Claims`, `ins.AuditEvents`, etc.) exists, and `ins.usp_Workflow_GetActiveVersion` is available. Uses SQL Server 2019/2022+ (replace `JSON_OBJECT` with a `FOR JSON PATH` fragment if needed).
-
 ---
 
 
